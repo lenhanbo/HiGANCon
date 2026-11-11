@@ -1,96 +1,118 @@
-# HiGAN
+# HiGAN-Contrastive
 
-## NEWs
-An improved work HiGAN+ is available at [https://github.com/ganji15/HiGANplus](https://github.com/ganji15/HiGANplus).
+Standalone implementation of the original [HiGAN](https://github.com/ganji15/HiGAN)
+training objective with one optional addition: generated-style supervised contrastive loss.
+It is designed for reproducible one-shot writer-style experiments on Kaggle.
 
-## Introduction
-This is a PyTorch implementation of the paper **"HiGAN: Handwriting Imitation Conditioned on Arbitrary-Length Texts and Disentangled Styles"** (authored by **Ji Gan**  & **Weiwiang Wang** ).
+## What is preserved
 
-## Overview of HiGAN
-![Overview of HiGAN](docs/imgs/Overview.png)
+The discriminator-side update trains `D`, `R`, and `W` with hinge adversarial loss,
+real-image CTC, and real-image writer classification while `G/E` are frozen. The
+generator-side update freezes `D/R/W` but propagates through them to generated images,
+and retains both generated modes, fake CTC, latent style reconstruction, fake writer
+classification, KL regularization, and HiGAN's adaptive gradient balancing.
 
-## Installation & requirements
-The current version of the code has been tested with the following environment:
-- Ubuntu16 or 18
-- CPU or NVIDIA GPU + CUDA cuDNN 10.0
-- Python 3
-- PyTorch 1.1.0+
+The contrastive run adds only:
 
-The versions that were used for other Python-packages are listed in requirements.txt.
-
-To use the code, download the repository and change into it:
-
-`git clone https://github.com/ganji15/HiGAN.git`
-
-`cd HiGAN`
-
-Assuming Python and pip are set up, the Python-packages used by this code can be installed using:
-
-`pip install -r requirements.txt`
-
-You need to applicant the IAM dataset from <http://www.fki.inf.unibe.ch/databases/iam-handwriting-database> and then extract the handwriting images. For convenience, here we provide the processed h5py files [trnvalset_words32.hdf5](https://drive.google.com/file/d/1K6nNcQ-4_MiPiaOUdXi80x5fVlheXbYM/view), [testset_words32.hdf5](https://drive.google.com/file/d/121wcainZweuXqCFyh5Q0WV3qb2SmNdBS/view), [testset_words32d_OrgSz.hdf5](https://drive.google.com/file/d/1vNbSiz7S60fvpj6-4k0fzHwx2uHDv0_0/view?usp=sharing), which should put into the **./data/** directory.
-
-
-## Training & Test
-### Training HiGAN on the IAM dataset
-`python train.py --config ./configs/gan_iam.yml`
-
-### Quantitative Test
-`python test.py --config ./configs/gan_iam.yml --ckpt ./runs/gan_iam-02-02-11-43/ckpts/last.pth --guided True`
-+ Main arguments:
-  - `--config`: the configuration file of HiGAN
-  - `--ckpt`: the path of checkpoint, which is stored in the `./runs/` directory after training.
-  - `--guided`: whether to extract styles from reference images. If `--guided False`, the styles of generated images will be randomly sampled from the standard normal distribution.
-
-### Qualitative Evaluation
-`python eval_demo.py --config ./configs/gan_iam.yml --ckpt ./runs/gan_iam-02-02-11-43/ckpts/last.pth --mode style`
-+ Main arguments:
-  - `--config`: the configuration file of HiGAN
-  - `--ckpt`: the path of checkpoint, which is stored in the `./runs/` directory after training.
-  - `--mode`: `[ rand | style | interp | text ]`.
-
-#### Latent-guided synthesis
-`python eval_demo.py --config ./configs/gan_iam.yml --ckpt ./runs/gan_iam-02-02-11-43/ckpts/last.pth --mode rand`
-![Rand](docs/imgs/GenRand.png)
-
-#### Reference-guided synthesis
-`python eval_demo.py --config ./configs/gan_iam.yml --ckpt ./runs/gan_iam-02-02-11-43/ckpts/last.pth --mode style`
-![Style](docs/imgs/GenStyle.png)
-
-#### Long text synthesis
-`python eval_demo.py --config ./configs/gan_iam.yml --ckpt ./runs/gan_iam-02-02-11-43/ckpts/last.pth --mode text`
-![Text](docs/imgs/GenText.png)
-
-#### Style interpolation
-`python eval_demo.py --config ./configs/gan_iam.yml --ckpt ./runs/gan_iam-02-02-11-43/ckpts/last.pth --mode interp`
-![Interp1](docs/imgs/GenInterp1.png)
-![Interp2](docs/imgs/GenInterp2.png)
-
-
-## On-the-fly plots during training
-With this code it is possible to track progress during training with on-the-fly plots. This feature requires `Tensorboard`, which should be started from the command line:
-
-`tensorboard --logdir=./runs`
-
-The tensorboard server is now alive and can be accessed at http://localhost:6006.
-
-Some on-the-fly plots are given as the followings:
-![Loss](docs/imgs/LogLoss.png)
-![Samples](docs/imgs/LogRes.png)
-
-
-## Citation
-If you find our research is helpful, please remember to cite our paper:
-```
-@inproceedings{gan2021higan,
-  author={Gan, Ji and Wang, Weiqiang},
-  title     = {HiGAN: Handwriting Imitation Conditioned on Arbitrary-Length Texts
-               and Disentangled Styles},
-  booktitle = {AAAI Conference on Artificial Intelligence},
-  pages     = {7484--7492},
-  year      = {2021}
-}
+```text
+lambda_con * SupCon(L2Norm(E_mu(G([shared_noise, E_mu(reference)], shared_text))))
 ```
 
-## License
-HiGAN is released under the MIT license.
+Each batch has 8 unique writers and 2 distinct reference words per writer. Positive
+pairs share writer identity; all other generated samples are negatives. The first five
+epochs use `lambda_con=0`, epochs 6–10 ramp linearly to 0.1, and later epochs hold 0.1.
+The baseline configuration uses `lambda_con=0` and skips the entire extra forward graph.
+
+## IAM layout and manifests
+
+Only one dataset path is needed. It must point directly to:
+
+```text
+iam_dataset/
+├── forms.txt
+├── linux_gt.txt
+├── train_gt.txt
+├── val_gt.txt
+└── words/a01/a01-000u/a01-000u-00-00.png
+```
+
+`train_gt.txt` and `val_gt.txt` are compatibility files, not experimental splits.
+The preparation command reads all valid entries from `linux_gt.txt`, maps form to writer
+through `forms.txt`, removes writers with fewer than two valid word images, shuffles
+writers with seed 42, and writes deterministic 80/10/10 writer-disjoint manifests.
+
+```bash
+python prepare_iam.py --dataset-root "$DATASET_ROOT" --output /kaggle/working/data --seed 42
+```
+
+Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
+normalized to `[-1,1]`, then padded with `-1` to a width divisible by 16.
+
+## Training and resume
+
+```bash
+python train.py \
+  --config configs/kaggle_contrastive.yaml \
+  --dataset-root "$DATASET_ROOT" \
+  --manifest-root /kaggle/working/data \
+  --output /kaggle/working/outputs/contrastive \
+  --max-hours 11.5
+```
+
+Use `configs/kaggle_baseline.yaml` for the paired baseline. Both use seed 123456,
+AMP, Adam 2e-4 with betas (0.5, 0.999), 70 epochs, and HiGAN's linear decay. Their
+`run_metadata.json` files must show the same `initial_state_hash` and `split_hash`.
+
+Resume with the exact same config and manifests:
+
+```bash
+python train.py ... --resume /kaggle/input/previous-output/outputs/contrastive/checkpoints/last.pt
+```
+
+Checkpoints include `G/D/E/R/W`, optimizers, schedulers, AMP scaler, epoch/global step,
+Python/NumPy/PyTorch/CUDA RNG, sampler position, Git commit, config/split hashes, and
+initial-state hash. `--max-hours` saves `last.pt` before stopping.
+
+If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 in
+**both** configs before starting either experiment. This gives 4 writers × 2 references.
+
+## Evaluation
+
+```bash
+python evaluate.py \
+  --config configs/kaggle_contrastive.yaml \
+  --dataset-root "$DATASET_ROOT" \
+  --manifest-root /kaggle/working/data \
+  --checkpoint /kaggle/working/outputs/contrastive/checkpoints/last.pt \
+  --recognizer-checkpoint /kaggle/input/independent-iam-recognizer/model.pt \
+  --output /kaggle/working/outputs/contrastive/evaluation.json
+```
+
+The report contains FID, KID, CER, WER, writer retrieval Top-1/Top-5, positive/negative
+cosine, separation gap, and noise diversity. For valid independent CER/WER reporting,
+supply an IAM recognizer trained outside both experiments; otherwise the report marks
+`independent_recognizer: false`.
+
+Success means improved writer retrieval and separation gap, CER degradation at most
+1 percentage point, and KID degradation at most 5% versus baseline.
+
+## Kaggle and tests
+
+Open [`kaggle/HiGAN_Contrastive.ipynb`](kaggle/HiGAN_Contrastive.ipynb), set its variables,
+and run all cells. It clones a pinned ref, validates CUDA and the explicit dataset root,
+installs packages without replacing Kaggle's PyTorch, creates manifests, runs tests and a
+one-batch smoke update, trains/resumes, evaluates, and creates `run_bundle.tar.gz`.
+
+```bash
+pytest -q
+python -m compileall -q higan_contrastive prepare_iam.py train.py evaluate.py
+```
+
+IAM, large generated sets, and checkpoints are ignored by Git.
+
+## Attribution
+
+Derived from Ji Gan and Weiqiang Wang's HiGAN implementation under its MIT license.
+Please cite the original *HiGAN: Handwriting Imitation Conditioned on Arbitrary-Length
+Texts and Disentangled Styles* paper when using this work.
+"# HiGANCon" 
