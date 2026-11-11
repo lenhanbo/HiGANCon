@@ -22,6 +22,7 @@ from .checkpoint import atomic_torch_save, file_hash, git_commit, restore_rng_st
 from .data import IAMManifestDataset, StatefulWriterPairBatchSampler, collate_words
 from .losses import (contrastive_weight, kl_loss, optional_contrastive_loss,
                      supervised_contrastive_loss)
+from .preview import save_preview
 
 
 def seed_everything(seed: int) -> None:
@@ -236,6 +237,35 @@ class HiGANTrainer:
             metrics.update(self._g_step(batch))
         return metrics
 
+    @torch.inference_mode()
+    def save_training_preview(self, batch: dict) -> Path:
+        modes = {name: model.training for name, model in self.models.items()}
+        for model in self.models.values():
+            model.eval()
+        try:
+            images = batch["images"].to(self.device)
+            image_lens = batch["image_lens"].to(self.device)
+            labels = batch["labels"].to(self.device)
+            label_lens = batch["label_lens"].to(self.device)
+            generator = torch.Generator(device=self.device)
+            generator.manual_seed(int(self.cfg.seed) + self.global_step)
+            random_z = torch.randn(
+                len(images), int(self.cfg.GenModel.style_dim), device=self.device, generator=generator)
+            reference_mu = self._encode_style(images, image_lens, vae=False)
+            noise = torch.randn(
+                len(images), self.noise_dim, device=self.device, generator=generator)
+            random_images = self.models["G"](random_z, labels, label_lens)
+            reference_images = self.models["G"](
+                torch.cat((noise, reference_mu), dim=1), labels, label_lens)
+            return save_preview(
+                images, image_lens, random_images, reference_images,
+                label_lens * self.char_width, batch["texts"],
+                self.output / "previews" / f"step_{self.global_step:08d}.png",
+                int(self.cfg.training.preview_items))
+        finally:
+            for name, model in self.models.items():
+                model.train(modes[name])
+
     def checkpoint_payload(self) -> dict:
         return {
             "schema_version": 1, "models": {n: m.state_dict() for n, m in self.models.items()},
@@ -296,7 +326,13 @@ class HiGANTrainer:
                     print(json.dumps(record, sort_keys=True), flush=True)
                 if self.global_step % int(self.cfg.training.save_every_steps) == 0:
                     self.save_checkpoint(f"step_{self.global_step:08d}.pt")
+                preview_every = int(self.cfg.training.preview_every_steps)
+                if preview_every > 0 and self.global_step % preview_every == 0:
+                    preview_path = self.save_training_preview(batch)
+                    print(f"Saved preview: {preview_path}", flush=True)
                 if smoke_test:
+                    preview_path = self.save_training_preview(batch)
+                    print(f"Saved smoke preview: {preview_path}", flush=True)
                     print("Smoke test passed: one full D-side and G/E-side update.", flush=True)
                     return
             self.epoch += 1

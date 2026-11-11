@@ -82,6 +82,11 @@ Checkpoints include `G/D/E/R/W`, optimizers, schedulers, AMP scaler, epoch/globa
 Python/NumPy/PyTorch/CUDA RNG, sampler position, Git commit, config/split hashes, and
 initial-state hash. `--max-hours` saves `last.pt` before stopping.
 
+Training saves a deterministic visual panel every 200 steps under `previews/`. Each row
+shows the same text as `REAL | RANDOM STYLE | REFERENCE STYLE`. Preview generation uses
+a local RNG and eval mode, so it does not advance training RNG or BatchNorm statistics.
+Change `preview_every_steps` or `preview_items` in both experiment configs if needed.
+
 If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 in
 **both** configs before starting either experiment. This gives 4 writers × 2 references.
 
