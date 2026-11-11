@@ -1,6 +1,8 @@
+import numpy as np
 import torch
 from torch import nn
 
+from evaluate import kid, retrieval_metrics, trim_batch
 from higan_contrastive.metrics import handwriting_distance
 
 
@@ -17,3 +19,32 @@ def test_hwd_detects_changed_handwriting_pixels():
     fake = [torch.full((1, 32, 40), 1.0), torch.full((1, 32, 40), -1.0)]
     score = handwriting_distance(real, fake, ["a", "b"], backbone, torch.device("cpu"))
     assert score > 0
+
+
+def test_kid_subsets_are_deterministic_and_finite():
+    rng = np.random.default_rng(7)
+    real = rng.normal(size=(12, 8)).astype(np.float32)
+    fake = rng.normal(size=(12, 8)).astype(np.float32)
+    first = kid(real, fake, subsets=4, subset_size=6, seed=42)
+    second = kid(real, fake, subsets=4, subset_size=6, seed=42)
+    assert np.isfinite(first)
+    assert first == second
+
+
+def test_writer_retrieval_chunks_cover_all_samples():
+    features = torch.tensor([[1.0, 0.0], [0.9, 0.1],
+                             [0.0, 1.0], [0.1, 0.9]])
+    labels = torch.tensor([0, 0, 1, 1])
+    metrics = retrieval_metrics(features, labels, chunk_size=1)
+    assert metrics["writer_top1"] == 1.0
+    assert metrics["writer_top5"] == 1.0
+    assert metrics["separation_gap"] > 0
+
+
+def test_trim_batch_caps_final_evaluation_batch():
+    batch = {"images": torch.arange(12).reshape(3, 4),
+             "texts": ["a", "b", "c"], "unchanged": "value"}
+    trimmed = trim_batch(batch, 2)
+    assert trimmed["images"].shape[0] == 2
+    assert trimmed["texts"] == ["a", "b"]
+    assert trimmed["unchanged"] == "value"

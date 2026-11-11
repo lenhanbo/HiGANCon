@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
 from higan_contrastive.checkpoint import file_hash
-from higan_contrastive.data import IAMManifestDataset, StatefulWriterPairBatchSampler, collate_words
+from higan_contrastive.data import IAMManifestDataset, collate_words
 from higan_contrastive.metrics import (HWD_VGG16_URL, handwriting_distance,
                                        load_hwd_backbone)
 from lib.alphabet import Alphabets
@@ -66,32 +66,69 @@ def fid(real: np.ndarray, fake: np.ndarray) -> float:
     return float((mu1 - mu2) @ (mu1 - mu2) + np.trace(sigma1 + sigma2 - 2 * covariance))
 
 
-def kid(real: np.ndarray, fake: np.ndarray) -> float:
+def kid(real: np.ndarray, fake: np.ndarray, subsets: int = 50,
+        subset_size: int = 1000, seed: int = 42) -> float:
     n = min(len(real), len(fake))
     real, fake = real[:n], fake[:n]
+    if n < 2:
+        raise ValueError("KID requires at least two samples")
     dimension = real.shape[1]
-    k_rr = (real @ real.T / dimension + 1) ** 3
-    k_ff = (fake @ fake.T / dimension + 1) ** 3
-    k_rf = (real @ fake.T / dimension + 1) ** 3
-    return float((k_rr.sum() - np.trace(k_rr)) / (n * (n - 1))
-                 + (k_ff.sum() - np.trace(k_ff)) / (n * (n - 1)) - 2 * k_rf.mean())
+    subset_size = min(int(subset_size), n)
+    rng = np.random.default_rng(seed)
+    scores = []
+    for _ in range(int(subsets)):
+        real_subset = real[rng.choice(n, subset_size, replace=False)]
+        fake_subset = fake[rng.choice(n, subset_size, replace=False)]
+        k_rr = (real_subset @ real_subset.T / dimension + 1) ** 3
+        k_ff = (fake_subset @ fake_subset.T / dimension + 1) ** 3
+        k_rf = (real_subset @ fake_subset.T / dimension + 1) ** 3
+        score = ((k_rr.sum() - np.trace(k_rr)) / (subset_size * (subset_size - 1))
+                 + (k_ff.sum() - np.trace(k_ff)) / (subset_size * (subset_size - 1))
+                 - 2 * k_rf.mean())
+        scores.append(score)
+    return float(np.mean(scores))
 
 
-def retrieval_metrics(features: torch.Tensor, labels: torch.Tensor) -> dict[str, float]:
+def retrieval_metrics(features: torch.Tensor, labels: torch.Tensor,
+                      chunk_size: int = 256) -> dict[str, float]:
     features = F.normalize(features, dim=1)
-    similarity = features @ features.T
-    similarity.fill_diagonal_(-float("inf"))
-    ranking = similarity.argsort(dim=1, descending=True)
-    matches = labels[ranking].eq(labels[:, None])
-    positive = features @ features.T
-    eye = torch.eye(len(labels), dtype=torch.bool)
-    same = labels[:, None].eq(labels[None, :]) & ~eye
-    different = ~labels[:, None].eq(labels[None, :])
-    pos = positive[same].mean().item()
-    neg = positive[different].mean().item()
-    return {"writer_top1": matches[:, :1].any(1).float().mean().item(),
-            "writer_top5": matches[:, :5].any(1).float().mean().item(),
+    n = len(labels)
+    if n < 2:
+        raise ValueError("Writer retrieval requires at least two samples")
+    top_k = min(5, n - 1)
+    top1_hits = top5_hits = 0
+    positive_sum = negative_sum = 0.0
+    positive_count = negative_count = 0
+    all_indices = torch.arange(n)
+    for start in range(0, n, chunk_size):
+        end = min(n, start + chunk_size)
+        similarity = features[start:end] @ features.T
+        local_indices = torch.arange(end - start)
+        similarity[local_indices, all_indices[start:end]] = -float("inf")
+        ranking = similarity.topk(top_k, dim=1).indices
+        matches = labels[ranking].eq(labels[start:end, None])
+        top1_hits += int(matches[:, :1].any(1).sum())
+        top5_hits += int(matches.any(1).sum())
+
+        raw_similarity = features[start:end] @ features.T
+        same = labels[start:end, None].eq(labels[None, :])
+        same[local_indices, all_indices[start:end]] = False
+        different = ~labels[start:end, None].eq(labels[None, :])
+        positive_sum += float(raw_similarity[same].sum())
+        negative_sum += float(raw_similarity[different].sum())
+        positive_count += int(same.sum())
+        negative_count += int(different.sum())
+    pos = positive_sum / max(1, positive_count)
+    neg = negative_sum / max(1, negative_count)
+    return {"writer_top1": top1_hits / n, "writer_top5": top5_hits / n,
             "positive_cosine": pos, "negative_cosine": neg, "separation_gap": pos - neg}
+
+
+def trim_batch(batch: dict, count: int) -> dict:
+    trimmed = {}
+    for key, value in batch.items():
+        trimmed[key] = value[:count] if isinstance(value, (torch.Tensor, list)) else value
+    return trimmed
 
 
 @torch.inference_mode()
@@ -118,13 +155,19 @@ def evaluate(args) -> dict:
         recognizer_state = torch.load(args.recognizer_checkpoint, map_location=device, weights_only=False)
         R.load_state_dict(recognizer_state.get("R", recognizer_state.get("Recognizer", recognizer_state)))
 
-    sampler = StatefulWriterPairBatchSampler(dataset.records, int(cfg.training.writers_per_batch), int(cfg.seed))
-    loader = DataLoader(dataset, batch_sampler=sampler, collate_fn=collate_words, num_workers=0)
+    loader = DataLoader(dataset, batch_size=int(cfg.training.batch_size), shuffle=False,
+                        drop_last=False, collate_fn=collate_words, num_workers=0)
     real_images, fake_images, hwd_real, hwd_fake, hwd_writers = [], [], [], [], []
     embeddings, writer_labels = [], []
     char_errors = word_errors = char_total = word_total = 0
     diversities = []
     for batch in loader:
+        if args.max_samples > 0:
+            remaining = args.max_samples - len(real_images)
+            if remaining <= 0:
+                break
+            if len(batch["texts"]) > remaining:
+                batch = trim_batch(batch, remaining)
         real = batch["images"].to(device)
         lengths = batch["image_lens"].to(device)
         labels = batch["labels"].to(device)
@@ -151,12 +194,6 @@ def evaluate(args) -> dict:
                 hwd_real.append(real[index, :, :, :int(lengths[index])].cpu())
                 hwd_fake.append(generated[index, :, :, :int(generated_lens[index])].cpu())
                 hwd_writers.append(batch["writer_ids"][index])
-        if len(real_images) >= args.max_samples:
-            break
-    real_images, fake_images = real_images[:args.max_samples], fake_images[:args.max_samples]
-    if not args.skip_hwd:
-        hwd_real, hwd_fake = hwd_real[:args.max_samples], hwd_fake[:args.max_samples]
-        hwd_writers = hwd_writers[:args.max_samples]
     del G, E, W, R, checkpoint
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -196,7 +233,8 @@ def main() -> None:
     parser.add_argument("--recognizer-checkpoint", default=None,
                         help="Independent IAM recognizer state dict for reportable CER/WER")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--max-samples", type=int, default=512)
+    parser.add_argument("--max-samples", type=int, default=0,
+                        help="Maximum unique test images; 0 evaluates the full manifest")
     parser.add_argument("--hwd-checkpoint", default=None,
                         help="Local path or hf://owner/repo/file@revision; official GitHub download otherwise")
     parser.add_argument("--skip-hwd", action="store_true",

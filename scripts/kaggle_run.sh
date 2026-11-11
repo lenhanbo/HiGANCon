@@ -7,7 +7,7 @@ RESUME_PATH=""
 RECOGNIZER_CHECKPOINT=""
 MAX_HOURS="11.5"
 HWD_CHECKPOINT=""
-EVAL_MAX_SAMPLES="512"
+EVAL_MAX_SAMPLES="0"
 CONTRASTIVE_START_STEP="28841"
 CONTRASTIVE_RAMP_STEPS="28840"
 MAX_STEPS="0"
@@ -26,7 +26,7 @@ Options:
   --max-steps STEPS                 0 means unlimited
   --contrastive-start-step STEP
   --contrastive-ramp-steps STEPS
-  --eval-max-samples COUNT
+  --eval-max-samples COUNT          0 means the full test manifest
   --hwd-checkpoint PATH_OR_HF_URI
   --skip-hwd
 
@@ -42,7 +42,7 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   RECOGNIZER_CHECKPOINT="${4:-}"
   MAX_HOURS="${5:-11.5}"
   HWD_CHECKPOINT="${6:-}"
-  EVAL_MAX_SAMPLES="${7:-512}"
+  EVAL_MAX_SAMPLES="${7:-0}"
   CONTRASTIVE_START_STEP="${8:-28841}"
   CONTRASTIVE_RAMP_STEPS="${9:-28840}"
   MAX_STEPS="${10:-0}"

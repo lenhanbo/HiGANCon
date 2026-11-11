@@ -140,6 +140,13 @@ independent CER/WER reporting,
 supply an IAM recognizer trained outside both experiments; otherwise the report marks
 `independent_recognizer: false`.
 
+Evaluation walks `test.jsonl` sequentially with no shuffle and no dropped final batch,
+so every test image is evaluated exactly once. `EVAL_MAX_SAMPLES=0` (the default) means
+the complete test manifest; set a positive value only for a quicker capped run. KID is
+estimated over 50 deterministic subsets of at most 1,000 samples, and writer retrieval
+is computed in chunks, allowing the complete test split to be evaluated without
+materializing their full pairwise matrices.
+
 Success means improved writer retrieval and separation gap, CER degradation at most
 1 percentage point, and KID degradation at most 5% versus baseline.
 
