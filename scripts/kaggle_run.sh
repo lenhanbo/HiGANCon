@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATASET_ROOT="${1:?Usage: bash scripts/kaggle_run.sh DATASET_ROOT [baseline|contrastive] [RESUME_PATH] [RECOGNIZER_CHECKPOINT] [MAX_HOURS] [HWD_CHECKPOINT] [EVAL_MAX_SAMPLES] [CONTRASTIVE_START_STEP] [CONTRASTIVE_RAMP_STEPS]}"
+DATASET_ROOT="${1:?Usage: bash scripts/kaggle_run.sh DATASET_ROOT [baseline|contrastive] [RESUME_PATH] [RECOGNIZER_CHECKPOINT] [MAX_HOURS] [HWD_CHECKPOINT] [EVAL_MAX_SAMPLES] [CONTRASTIVE_START_STEP] [CONTRASTIVE_RAMP_STEPS] [MAX_STEPS] [SKIP_HWD]}"
 RUN_MODE="${2:-contrastive}"
 RESUME_PATH="${3:-}"
 RECOGNIZER_CHECKPOINT="${4:-}"
@@ -10,6 +10,8 @@ HWD_CHECKPOINT="${6:-}"
 EVAL_MAX_SAMPLES="${7:-512}"
 CONTRASTIVE_START_STEP="${8:-28841}"
 CONTRASTIVE_RAMP_STEPS="${9:-28840}"
+MAX_STEPS="${10:-0}"
+SKIP_HWD="${11:-false}"
 
 if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "contrastive" ]]; then
   echo "RUN_MODE must be baseline or contrastive" >&2
@@ -25,6 +27,7 @@ fi
 
 python train.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --manifest-root /kaggle/working/data --output "$OUTPUT" --max-hours "$MAX_HOURS" \
+  --max-steps "$MAX_STEPS" \
   "${resume_args[@]}" \
   --contrastive-start-step "$CONTRASTIVE_START_STEP" \
   --contrastive-ramp-steps "$CONTRASTIVE_RAMP_STEPS"
@@ -34,7 +37,9 @@ if [[ -n "$RECOGNIZER_CHECKPOINT" ]]; then
   recognizer_args=(--recognizer-checkpoint "$RECOGNIZER_CHECKPOINT")
 fi
 hwd_args=()
-if [[ -n "$HWD_CHECKPOINT" ]]; then
+if [[ "$SKIP_HWD" == "true" || "$SKIP_HWD" == "1" ]]; then
+  hwd_args=(--skip-hwd)
+elif [[ -n "$HWD_CHECKPOINT" ]]; then
   hwd_args=(--hwd-checkpoint "$HWD_CHECKPOINT")
 fi
 python evaluate.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \

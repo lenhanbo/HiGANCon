@@ -15,10 +15,34 @@ HWD_VGG16_URL = (
 )
 
 
+def resolve_hwd_checkpoint(source: str) -> str:
+    """Resolve a local path or hf://owner/repo/file@revision URI."""
+    if not source.startswith("hf://"):
+        return source
+    payload = source[len("hf://"):]
+    parts = payload.split("/", 2)
+    if len(parts) != 3 or not all(parts):
+        raise ValueError("HWD Hugging Face URI must be hf://owner/repo/file.pth[@revision]")
+    repo_id = "/".join(parts[:2])
+    file_and_revision = parts[2]
+    if "@" in file_and_revision:
+        filename, revision = file_and_revision.rsplit("@", 1)
+    else:
+        filename, revision = file_and_revision, "main"
+    if not filename or not revision:
+        raise ValueError("HWD Hugging Face URI has an empty filename or revision")
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise RuntimeError("Install huggingface_hub to use an hf:// HWD checkpoint") from exc
+    return hf_hub_download(repo_id=repo_id, filename=filename, revision=revision)
+
+
 def load_hwd_backbone(device: torch.device, checkpoint: str | None = None) -> nn.Module:
     """Load the official Font² VGG-16 and retain its convolutional features."""
     model = vgg16(weights=None, num_classes=10400)
     if checkpoint:
+        checkpoint = resolve_hwd_checkpoint(checkpoint)
         state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     else:
         state = torch.hub.load_state_dict_from_url(

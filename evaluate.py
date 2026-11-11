@@ -147,14 +147,16 @@ def evaluate(args) -> dict:
         for index in range(len(real)):
             real_images.append(F.interpolate(real[index:index + 1], (32, 128)).squeeze(0).cpu())
             fake_images.append(F.interpolate(generated[index:index + 1], (32, 128)).squeeze(0).cpu())
-            hwd_real.append(real[index, :, :, :int(lengths[index])].cpu())
-            hwd_fake.append(generated[index, :, :, :int(generated_lens[index])].cpu())
-            hwd_writers.append(batch["writer_ids"][index])
+            if not args.skip_hwd:
+                hwd_real.append(real[index, :, :, :int(lengths[index])].cpu())
+                hwd_fake.append(generated[index, :, :, :int(generated_lens[index])].cpu())
+                hwd_writers.append(batch["writer_ids"][index])
         if len(real_images) >= args.max_samples:
             break
     real_images, fake_images = real_images[:args.max_samples], fake_images[:args.max_samples]
-    hwd_real, hwd_fake = hwd_real[:args.max_samples], hwd_fake[:args.max_samples]
-    hwd_writers = hwd_writers[:args.max_samples]
+    if not args.skip_hwd:
+        hwd_real, hwd_fake = hwd_real[:args.max_samples], hwd_fake[:args.max_samples]
+        hwd_writers = hwd_writers[:args.max_samples]
     del G, E, W, R, checkpoint
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -166,15 +168,19 @@ def evaluate(args) -> dict:
     del inception
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    hwd_backbone = load_hwd_backbone(device, args.hwd_checkpoint or None)
-    hwd_value = handwriting_distance(hwd_real, hwd_fake, hwd_writers, hwd_backbone, device)
-    del hwd_backbone
     metrics = {"fid": fid(real_features, fake_features), "kid": kid(real_features, fake_features),
-               "hwd": hwd_value, "hwd_writers": len(set(hwd_writers)),
-               "hwd_backbone": args.hwd_checkpoint or HWD_VGG16_URL,
                "cer": char_errors / max(1, char_total), "wer": word_errors / max(1, word_total),
                "diversity_l1": float(np.mean(diversities)),
                "independent_recognizer": independent, "samples": len(real_images)}
+    if args.skip_hwd:
+        metrics.update({"hwd": None, "hwd_skipped": True})
+    else:
+        hwd_backbone = load_hwd_backbone(device, args.hwd_checkpoint or None)
+        hwd_value = handwriting_distance(hwd_real, hwd_fake, hwd_writers, hwd_backbone, device)
+        del hwd_backbone
+        metrics.update({"hwd": hwd_value, "hwd_skipped": False,
+                        "hwd_writers": len(set(hwd_writers)),
+                        "hwd_backbone": args.hwd_checkpoint or HWD_VGG16_URL})
     metrics.update(retrieval_metrics(torch.cat(embeddings), torch.cat(writer_labels)))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -192,7 +198,9 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--max-samples", type=int, default=512)
     parser.add_argument("--hwd-checkpoint", default=None,
-                        help="Optional local official Font² VGG-16 checkpoint; downloads it otherwise")
+                        help="Local path or hf://owner/repo/file@revision; official GitHub download otherwise")
+    parser.add_argument("--skip-hwd", action="store_true",
+                        help="Skip HWD backbone download/computation; writes hwd=null")
     args = parser.parse_args()
     print(json.dumps(evaluate(args), indent=2))
 

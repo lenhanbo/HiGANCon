@@ -38,6 +38,7 @@ def seed_everything(seed: int) -> None:
 class HiGANTrainer:
     def __init__(self, cfg, config_path: str, dataset_root: str, manifest_root: str,
                  output: str, resume: str | None = None, max_hours: float | None = None,
+                 max_steps: int | None = None,
                  contrastive_start_step: int | None = None,
                  contrastive_ramp_steps: int | None = None):
         self.cfg = cfg
@@ -47,6 +48,7 @@ class HiGANTrainer:
         self.output.mkdir(parents=True, exist_ok=True)
         (self.output / "checkpoints").mkdir(exist_ok=True)
         self.max_hours = max_hours
+        self.max_steps = int(max_steps) if max_steps is not None and int(max_steps) > 0 else None
         self.contrastive_start_step = int(
             contrastive_start_step if contrastive_start_step is not None
             else cfg.contrastive.start_step)
@@ -129,6 +131,7 @@ class HiGANTrainer:
             "train_writers": len(self.dataset.writer_to_index),
             "contrastive_start_step": self.contrastive_start_step,
             "contrastive_ramp_steps": self.contrastive_ramp_steps,
+            "max_steps_this_session": self.max_steps,
         }
         (self.output / "run_metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -385,8 +388,15 @@ class HiGANTrainer:
     def _time_expired(self) -> bool:
         return self.max_hours is not None and (time.monotonic() - self.started_at) >= self.max_hours * 3600
 
+    def _step_limit_reached(self) -> bool:
+        return self.max_steps is not None and self.global_step >= self.max_steps
+
     def train(self, smoke_test: bool = False) -> None:
         total_epochs = int(self.cfg.training.epochs)
+        if self._step_limit_reached():
+            self.save_checkpoint()
+            print(f"Already at --max-steps={self.max_steps}; saved last.pt.", flush=True)
+            return
         while self.epoch < total_epochs:
             self.sampler.set_position(self.epoch, self.sampler.start_batch)
             for batch_index, batch in enumerate(self.loader, start=self.sampler.start_batch):
@@ -421,6 +431,10 @@ class HiGANTrainer:
                     preview_path = self.save_training_preview(batch)
                     print(f"Saved smoke preview: {preview_path}", flush=True)
                     print("Smoke test passed: one full D-side and G/E-side update.", flush=True)
+                    return
+                if self._step_limit_reached():
+                    self.save_checkpoint()
+                    print(f"Reached --max-steps={self.max_steps}; saved last.pt.", flush=True)
                     return
             self.epoch += 1
             self.sampler.set_position(self.epoch, 0)

@@ -53,7 +53,8 @@ environment variables:
 bash scripts/kaggle_setup.sh "$DATASET_ROOT"
 bash scripts/kaggle_run.sh "$DATASET_ROOT" "$RUN_MODE" "$RESUME_PATH" \
   "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS" "$HWD_CHECKPOINT" "$EVAL_MAX_SAMPLES" \
-  "$CONTRASTIVE_START_STEP" "$CONTRASTIVE_RAMP_STEPS"
+  "$CONTRASTIVE_START_STEP" "$CONTRASTIVE_RAMP_STEPS" "$MAX_STEPS" \
+  "$SKIP_HWD"
 ```
 
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
@@ -83,6 +84,10 @@ python train.py ... --resume /kaggle/input/previous-output/outputs/contrastive/c
 Checkpoints include `G/D/E/R/W`, optimizers, schedulers, AMP scaler, epoch/global step,
 Python/NumPy/PyTorch/CUDA RNG, sampler position, Git commit, config/split hashes, and
 initial-state hash. `--max-hours` saves `last.pt` before stopping.
+
+`--max-steps N` is an exact global-step ceiling. It saves `last.pt` immediately after
+step N; `0` disables this ceiling. On resume the restored global step is used, so raising
+the ceiling continues training while lowering it below the saved step exits immediately.
 
 Training saves a deterministic visual panel every 200 steps under `previews/`. It shows
 `REAL REFERENCE | RANDOM SYNTHETIC STYLE | REFERENCE-GUIDED | SUPCON SHARED TEXT/NOISE`.
@@ -120,7 +125,12 @@ positive/negative cosine, separation gap, and noise diversity. HWD follows the o
 BMVC 2023 protocol: Font²-pretrained VGG-16 features at height 32, writer-wise feature
 means, Euclidean distance, then an average over writers. Lower FID, KID, and HWD are
 better. The official HWD backbone downloads once and is cached by PyTorch; pass
-`--hwd-checkpoint` to use an attached local checkpoint without Internet. For valid
+`--hwd-checkpoint` to use an attached local checkpoint without Internet. It also accepts
+`hf://owner/repo/file.pth@revision` and downloads through `huggingface_hub`. No official
+HWD/Font² checkpoint was found on the Hub, so the empty default still uses the authors'
+official GitHub release. Set `SKIP_HWD=true` (or pass `--skip-hwd` directly to
+`evaluate.py`) to avoid downloading/loading the HWD backbone; the report records
+`hwd: null` and `hwd_skipped: true`. For valid
 independent CER/WER reporting,
 supply an IAM recognizer trained outside both experiments; otherwise the report marks
 `independent_recognizer: false`.
