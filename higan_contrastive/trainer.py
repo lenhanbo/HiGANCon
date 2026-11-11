@@ -102,6 +102,8 @@ class HiGANTrainer:
         self.epoch = 0
         self.global_step = 0
         self.metrics_path = self.output / "metrics.jsonl"
+        self.log_window_sums: dict[str, float] = {}
+        self.log_window_counts: dict[str, int] = {}
         if resume:
             self.load_checkpoint(resume)
         self._write_run_metadata()
@@ -237,6 +239,18 @@ class HiGANTrainer:
             metrics.update(self._g_step(batch))
         return metrics
 
+    def _update_log_window(self, metrics: dict[str, float]) -> None:
+        for name, value in metrics.items():
+            self.log_window_sums[name] = self.log_window_sums.get(name, 0.0) + float(value)
+            self.log_window_counts[name] = self.log_window_counts.get(name, 0) + 1
+
+    def _pop_log_window(self) -> dict[str, float]:
+        averages = {name: self.log_window_sums[name] / self.log_window_counts[name]
+                    for name in sorted(self.log_window_sums)}
+        self.log_window_sums.clear()
+        self.log_window_counts.clear()
+        return averages
+
     @torch.inference_mode()
     def save_training_preview(self, batch: dict) -> Path:
         modes = {name: model.training for name, model in self.models.items()}
@@ -316,6 +330,7 @@ class HiGANTrainer:
                     print("Reached --max-hours; saved a resumable checkpoint.", flush=True)
                     return
                 metrics = self.train_batch(batch)
+                self._update_log_window(metrics)
                 self.global_step += 1
                 self.sampler.set_position(self.epoch, batch_index + 1)
                 record = {"epoch": self.epoch + 1, "batch": batch_index + 1,
@@ -323,7 +338,14 @@ class HiGANTrainer:
                 with self.metrics_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record, sort_keys=True) + "\n")
                 if self.global_step % int(self.cfg.training.print_every_steps) == 0:
-                    print(json.dumps(record, sort_keys=True), flush=True)
+                    log_record = {
+                        "epoch": self.epoch + 1,
+                        "batch": batch_index + 1,
+                        "global_step": self.global_step,
+                        "window_steps": int(self.cfg.training.print_every_steps),
+                        **self._pop_log_window(),
+                    }
+                    print(json.dumps(log_record, sort_keys=True), flush=True)
                 if self.global_step % int(self.cfg.training.save_every_steps) == 0:
                     self.save_checkpoint(f"step_{self.global_step:08d}.pt")
                 preview_every = int(self.cfg.training.preview_every_steps)

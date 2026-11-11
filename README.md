@@ -87,6 +87,12 @@ shows the same text as `REAL | RANDOM STYLE | REFERENCE STYLE`. Preview generati
 a local RNG and eval mode, so it does not advance training RNG or BatchNorm statistics.
 Change `preview_every_steps` or `preview_items` in both experiment configs if needed.
 
+Console loss records are averages over `print_every_steps` training batches. This is
+important because D-side runs every batch while G/E-side runs every four batches; the
+windowed record still includes `g_total`, `supcon`, and `lambda_con`. Per-batch values
+remain in `metrics.jsonl`. For the contrastive config, `lambda_con` and `supcon` are zero
+during epochs 1–5 by design, then the weight is 0.02/0.04/0.06/0.08/0.10 in epochs 6–10.
+
 If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 in
 **both** configs before starting either experiment. This gives 4 writers × 2 references.
 
