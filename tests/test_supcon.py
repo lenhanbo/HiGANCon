@@ -2,7 +2,7 @@ import torch
 import pytest
 from torch import nn
 
-from higan_contrastive.losses import (contrastive_weight, optional_contrastive_loss,
+from higan_contrastive.losses import (contrastive_weight_at_step, optional_contrastive_loss,
                                       supervised_contrastive_loss)
 
 
@@ -29,13 +29,6 @@ def test_generated_supcon_reaches_generator_and_encoder():
     assert generator.weight.grad is not None and generator.weight.grad.abs().sum() > 0
 
 
-def test_lambda_schedule_and_baseline_zero():
-    assert [contrastive_weight(epoch, 0.1) for epoch in range(5)] == [0.0] * 5
-    assert contrastive_weight(5, 0.1) == pytest.approx(0.02)
-    assert contrastive_weight(9, 0.1) == pytest.approx(0.1)
-    assert contrastive_weight(100, 0.0) == 0.0
-
-
 def test_zero_weight_does_not_build_contrastive_path():
     called = False
 
@@ -47,3 +40,11 @@ def test_zero_weight_does_not_build_contrastive_path():
     result = optional_contrastive_loss(0.0, torch.tensor(1.0), forbidden)
     assert result.item() == 0.0
     assert not called
+
+
+def test_step_based_contrastive_schedule():
+    assert contrastive_weight_at_step(99, 0.1, 100, 10) == 0.0
+    assert contrastive_weight_at_step(100, 0.1, 100, 10) == pytest.approx(0.01)
+    assert contrastive_weight_at_step(109, 0.1, 100, 10) == pytest.approx(0.1)
+    assert contrastive_weight_at_step(500, 0.1, 100, 0) == pytest.approx(0.1)
+    assert contrastive_weight_at_step(500, 0.0, 100, 10) == 0.0

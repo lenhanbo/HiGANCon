@@ -28,13 +28,16 @@ def supervised_contrastive_loss(features: torch.Tensor, labels: torch.Tensor,
     return -(log_prob * positive).sum(dim=1).div(positive.sum(dim=1)).mean()
 
 
-def contrastive_weight(epoch_zero_based: int, target: float, warmup_epochs: int = 5,
-                       ramp_epochs: int = 5) -> float:
-    if target <= 0 or epoch_zero_based < warmup_epochs:
+def contrastive_weight_at_step(step_one_based: int, target: float, start_step: int,
+                               ramp_steps: int) -> float:
+    """Step schedule: zero before start_step, then linear ramp to target."""
+    if step_one_based < 1 or start_step < 1:
+        raise ValueError("step_one_based and start_step must be >= 1")
+    if target <= 0 or step_one_based < start_step:
         return 0.0
-    if ramp_epochs <= 0:
+    if ramp_steps <= 1:
         return float(target)
-    progress = min(1.0, (epoch_zero_based - warmup_epochs + 1) / ramp_epochs)
+    progress = min(1.0, (step_one_based - start_step + 1) / ramp_steps)
     return float(target) * progress
 
 

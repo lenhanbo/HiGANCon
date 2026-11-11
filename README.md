@@ -20,7 +20,8 @@ lambda_con * SupCon(L2Norm(E_mu(G([shared_noise, E_mu(reference)], shared_text))
 
 Each batch has 8 unique writers and 2 distinct reference words per writer. Positive
 pairs share writer identity; all other generated samples are negatives. The first five
-epochs use `lambda_con=0`, epochs 6–10 ramp linearly to 0.1, and later epochs hold 0.1.
+steps before `start_step` use `lambda_con=0`; it then ramps linearly for `ramp_steps`
+updates and holds 0.1. Both values are exposed in the Kaggle parameter cell.
 The baseline configuration uses `lambda_con=0` and skips the entire extra forward graph.
 
 ## IAM layout and manifests
@@ -51,7 +52,8 @@ environment variables:
 ```bash
 bash scripts/kaggle_setup.sh "$DATASET_ROOT"
 bash scripts/kaggle_run.sh "$DATASET_ROOT" "$RUN_MODE" "$RESUME_PATH" \
-  "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS" "$HWD_CHECKPOINT" "$EVAL_MAX_SAMPLES"
+  "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS" "$HWD_CHECKPOINT" "$EVAL_MAX_SAMPLES" \
+  "$CONTRASTIVE_START_STEP" "$CONTRASTIVE_RAMP_STEPS"
 ```
 
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
@@ -82,16 +84,21 @@ Checkpoints include `G/D/E/R/W`, optimizers, schedulers, AMP scaler, epoch/globa
 Python/NumPy/PyTorch/CUDA RNG, sampler position, Git commit, config/split hashes, and
 initial-state hash. `--max-hours` saves `last.pt` before stopping.
 
-Training saves a deterministic visual panel every 200 steps under `previews/`. Each row
-shows the same text as `REAL | RANDOM STYLE | REFERENCE STYLE`. Preview generation uses
-a local RNG and eval mode, so it does not advance training RNG or BatchNorm statistics.
-Change `preview_every_steps` or `preview_items` in both experiment configs if needed.
+Training saves a deterministic visual panel every 200 steps under `previews/`. It shows
+`REAL REFERENCE | RANDOM SYNTHETIC STYLE | REFERENCE-GUIDED | SUPCON SHARED TEXT/NOISE`.
+The random column uses one `z ~ N(0,I)` shared by every row, so multiple texts reveal one
+synthetic style; it has no real writer identity. The adjacent JSON records its seed and
+all 128 latent values. SupCon rows preserve sampler order, so each adjacent pair belongs
+to one writer and uses the same text/noise. Preview generation uses a local RNG and eval
+mode, so it does not advance training RNG or BatchNorm statistics. Change
+`preview_every_steps` or `preview_items` in both experiment configs if needed.
 
 Console loss records are averages over `print_every_steps` training batches. This is
 important because D-side runs every batch while G/E-side runs every four batches; the
 windowed record still includes `g_total`, `supcon`, and `lambda_con`. Per-batch values
 remain in `metrics.jsonl`. For the contrastive config, `lambda_con` and `supcon` are zero
-during epochs 1–5 by design, then the weight is 0.02/0.04/0.06/0.08/0.10 in epochs 6–10.
+before `CONTRASTIVE_START_STEP`; the weight then rises per training step over
+`CONTRASTIVE_RAMP_STEPS`. Set ramp to 0 or 1 to switch immediately to the target weight.
 
 If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 in
 **both** configs before starting either experiment. This gives 4 writers × 2 references.

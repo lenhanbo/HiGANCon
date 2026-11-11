@@ -20,7 +20,7 @@ from networks.utils import get_scheduler, rand_clip, set_requires_grad
 
 from .checkpoint import atomic_torch_save, file_hash, git_commit, restore_rng_state, rng_state, state_hash
 from .data import IAMManifestDataset, StatefulWriterPairBatchSampler, collate_words
-from .losses import (contrastive_weight, kl_loss, optional_contrastive_loss,
+from .losses import (contrastive_weight_at_step, kl_loss, optional_contrastive_loss,
                      supervised_contrastive_loss)
 from .preview import save_preview
 
@@ -37,7 +37,9 @@ def seed_everything(seed: int) -> None:
 
 class HiGANTrainer:
     def __init__(self, cfg, config_path: str, dataset_root: str, manifest_root: str,
-                 output: str, resume: str | None = None, max_hours: float | None = None):
+                 output: str, resume: str | None = None, max_hours: float | None = None,
+                 contrastive_start_step: int | None = None,
+                 contrastive_ramp_steps: int | None = None):
         self.cfg = cfg
         self.config_path = Path(config_path).resolve()
         self.manifest_root = Path(manifest_root).resolve()
@@ -45,6 +47,14 @@ class HiGANTrainer:
         self.output.mkdir(parents=True, exist_ok=True)
         (self.output / "checkpoints").mkdir(exist_ok=True)
         self.max_hours = max_hours
+        self.contrastive_start_step = int(
+            contrastive_start_step if contrastive_start_step is not None
+            else cfg.contrastive.start_step)
+        self.contrastive_ramp_steps = int(
+            contrastive_ramp_steps if contrastive_ramp_steps is not None
+            else cfg.contrastive.ramp_steps)
+        if self.contrastive_start_step < 1 or self.contrastive_ramp_steps < 0:
+            raise ValueError("contrastive start_step must be >=1 and ramp_steps must be >=0")
         self.started_at = time.monotonic()
         self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
         seed_everything(int(cfg.seed))
@@ -117,6 +127,8 @@ class HiGANTrainer:
             "split_hash": self.split_hash, "initial_state_hash": self.initial_state_hash,
             "device": str(self.device), "train_images": len(self.dataset),
             "train_writers": len(self.dataset.writer_to_index),
+            "contrastive_start_step": self.contrastive_start_step,
+            "contrastive_ramp_steps": self.contrastive_ramp_steps,
         }
         (self.output / "run_metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -189,9 +201,9 @@ class HiGANTrainer:
         writers = batch["writers"].to(self.device, non_blocking=True)
         fake_labels, fake_label_lens, _ = self._texts(images.shape[0])
         fake_image_lens = fake_label_lens * self.char_width
-        con_weight = contrastive_weight(self.epoch, float(self.cfg.contrastive.lambda_con),
-                                        int(self.cfg.contrastive.warmup_epochs),
-                                        int(self.cfg.contrastive.ramp_epochs))
+        con_weight = contrastive_weight_at_step(
+            self.global_step + 1, float(self.cfg.contrastive.lambda_con),
+            self.contrastive_start_step, self.contrastive_ramp_steps)
         with self._autocast():
             random_z, random_images, reference_images, mu, logvar = self._sample_fakes(
                 images, image_lens, fake_labels, fake_label_lens)
@@ -262,20 +274,65 @@ class HiGANTrainer:
             labels = batch["labels"].to(self.device)
             label_lens = batch["label_lens"].to(self.device)
             generator = torch.Generator(device=self.device)
-            generator.manual_seed(int(self.cfg.seed) + self.global_step)
-            random_z = torch.randn(
-                len(images), int(self.cfg.GenModel.style_dim), device=self.device, generator=generator)
+            preview_seed = int(self.cfg.seed) + self.global_step
+            generator.manual_seed(preview_seed)
+            random_z_single = torch.randn(
+                1, int(self.cfg.GenModel.style_dim), device=self.device, generator=generator)
+            random_z = random_z_single.expand(len(images), -1)
             reference_mu = self._encode_style(images, image_lens, vae=False)
             noise = torch.randn(
                 len(images), self.noise_dim, device=self.device, generator=generator)
             random_images = self.models["G"](random_z, labels, label_lens)
             reference_images = self.models["G"](
                 torch.cat((noise, reference_mu), dim=1), labels, label_lens)
+            con_weight = contrastive_weight_at_step(
+                max(1, self.global_step), float(self.cfg.contrastive.lambda_con),
+                self.contrastive_start_step, self.contrastive_ramp_steps)
+            contrastive_images = None
+            contrastive_lengths = None
+            contrastive_text = None
+            if float(self.cfg.contrastive.lambda_con) > 0:
+                shared_labels = labels[:1].expand(len(images), -1).contiguous()
+                shared_label_lens = label_lens[:1].expand(len(images)).contiguous()
+                shared_noise = torch.randn(
+                    1, self.noise_dim, device=self.device, generator=generator).expand(len(images), -1)
+                contrastive_images = self.models["G"](
+                    torch.cat((shared_noise, reference_mu), dim=1),
+                    shared_labels, shared_label_lens)
+                contrastive_lengths = shared_label_lens * self.char_width
+                contrastive_text = batch["texts"][0]
+            metadata = {
+                "global_step": self.global_step,
+                "random_synthetic_style": {
+                    "definition": "One z sampled from N(0,I); it has no real writer identity and is shared across preview rows.",
+                    "seed": preview_seed,
+                    "latent_dim": int(self.cfg.GenModel.style_dim),
+                    "auxiliary_noise_dims": self.noise_dim,
+                    "style_code_dims": self.style_dim,
+                    "z": random_z_single[0].detach().float().cpu().tolist(),
+                },
+                "reference_guided_style": {
+                    "definition": "Per-row deterministic E_mu(real) plus per-row auxiliary noise.",
+                },
+                "supcon_view": {
+                    "enabled_in_objective": con_weight > 0,
+                    "lambda_con": con_weight,
+                    "start_step": self.contrastive_start_step,
+                    "ramp_steps": self.contrastive_ramp_steps,
+                    "definition": "E_mu(real) with one shared auxiliary noise and one shared text for every row; adjacent rows are same-writer pairs.",
+                    "shared_text": contrastive_text,
+                },
+            }
             return save_preview(
                 images, image_lens, random_images, reference_images,
                 label_lens * self.char_width, batch["texts"],
                 self.output / "previews" / f"step_{self.global_step:08d}.png",
-                int(self.cfg.training.preview_items))
+                int(self.cfg.training.preview_items), writer_ids=batch["writer_ids"],
+                random_title=f"RANDOM z~N(0,I) seed={preview_seed}",
+                contrastive_style=contrastive_images,
+                contrastive_lengths=contrastive_lengths,
+                contrastive_text=contrastive_text,
+                metadata=metadata)
         finally:
             for name, model in self.models.items():
                 model.train(modes[name])
@@ -290,6 +347,10 @@ class HiGANTrainer:
             "rng": rng_state(), "git_commit": git_commit(),
             "config_hash": self.config_hash, "split_hash": self.split_hash,
             "initial_state_hash": self.initial_state_hash,
+            "contrastive_schedule": {
+                "start_step": self.contrastive_start_step,
+                "ramp_steps": self.contrastive_ramp_steps,
+            },
         }
 
     def save_checkpoint(self, name: str = "last.pt") -> Path:
@@ -308,6 +369,10 @@ class HiGANTrainer:
             raise ValueError("Checkpoint split hash does not match manifests")
         if checkpoint["initial_state_hash"] != self.initial_state_hash:
             raise ValueError("Checkpoint was created from a different initialization")
+        expected_schedule = {"start_step": self.contrastive_start_step,
+                             "ramp_steps": self.contrastive_ramp_steps}
+        if checkpoint.get("contrastive_schedule") != expected_schedule:
+            raise ValueError("Checkpoint contrastive step schedule does not match this run")
         for name, state in checkpoint["models"].items(): self.models[name].load_state_dict(state)
         for name, state in checkpoint["optimizers"].items(): self.optimizers[name].load_state_dict(state)
         for name, state in checkpoint["schedulers"].items(): self.schedulers[name].load_state_dict(state)

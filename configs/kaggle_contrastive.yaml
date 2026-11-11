@@ -25,8 +25,8 @@ training:
 contrastive:
   lambda_con: 0.1
   temperature: 0.07
-  warmup_epochs: 5
-  ramp_epochs: 5
+  start_step: 28841
+  ramp_steps: 28840
 GenModel:
   G_ch: 64
   style_dim: 128
