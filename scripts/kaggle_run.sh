@@ -14,7 +14,7 @@ MAX_STEPS="${10:-0}"
 SKIP_HWD="${11:-false}"
 
 if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "contrastive" ]]; then
-  echo "RUN_MODE must be baseline or contrastive" >&2
+  printf 'RUN_MODE must be baseline or contrastive; received argument 2 as <%q>\n' "$RUN_MODE" >&2
   exit 2
 fi
 CONFIG="configs/kaggle_${RUN_MODE}.yaml"
