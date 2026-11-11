@@ -51,7 +51,7 @@ environment variables:
 ```bash
 bash scripts/kaggle_setup.sh "$DATASET_ROOT"
 bash scripts/kaggle_run.sh "$DATASET_ROOT" "$RUN_MODE" "$RESUME_PATH" \
-  "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS"
+  "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS" "$HWD_CHECKPOINT" "$EVAL_MAX_SAMPLES"
 ```
 
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
@@ -102,8 +102,13 @@ python evaluate.py \
   --output /kaggle/working/outputs/contrastive/evaluation.json
 ```
 
-The report contains FID, KID, CER, WER, writer retrieval Top-1/Top-5, positive/negative
-cosine, separation gap, and noise diversity. For valid independent CER/WER reporting,
+The report contains FID, KID, HWD, CER, WER, writer retrieval Top-1/Top-5,
+positive/negative cosine, separation gap, and noise diversity. HWD follows the official
+BMVC 2023 protocol: Font²-pretrained VGG-16 features at height 32, writer-wise feature
+means, Euclidean distance, then an average over writers. Lower FID, KID, and HWD are
+better. The official HWD backbone downloads once and is cached by PyTorch; pass
+`--hwd-checkpoint` to use an attached local checkpoint without Internet. For valid
+independent CER/WER reporting,
 supply an IAM recognizer trained outside both experiments; otherwise the report marks
 `independent_recognizer: false`.
 

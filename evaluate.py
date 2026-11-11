@@ -13,6 +13,8 @@ from torchvision.models import Inception_V3_Weights, inception_v3
 
 from higan_contrastive.checkpoint import file_hash
 from higan_contrastive.data import IAMManifestDataset, StatefulWriterPairBatchSampler, collate_words
+from higan_contrastive.metrics import (HWD_VGG16_URL, handwriting_distance,
+                                       load_hwd_backbone)
 from lib.alphabet import Alphabets
 from lib.utils import yaml2config
 from networks.BigGAN_networks import Generator
@@ -118,7 +120,8 @@ def evaluate(args) -> dict:
 
     sampler = StatefulWriterPairBatchSampler(dataset.records, int(cfg.training.writers_per_batch), int(cfg.seed))
     loader = DataLoader(dataset, batch_sampler=sampler, collate_fn=collate_words, num_workers=0)
-    real_images, fake_images, embeddings, writer_labels = [], [], [], []
+    real_images, fake_images, hwd_real, hwd_fake, hwd_writers = [], [], [], [], []
+    embeddings, writer_labels = [], []
     char_errors = word_errors = char_total = word_total = 0
     diversities = []
     for batch in loader:
@@ -144,15 +147,31 @@ def evaluate(args) -> dict:
         for index in range(len(real)):
             real_images.append(F.interpolate(real[index:index + 1], (32, 128)).squeeze(0).cpu())
             fake_images.append(F.interpolate(generated[index:index + 1], (32, 128)).squeeze(0).cpu())
+            hwd_real.append(real[index, :, :, :int(lengths[index])].cpu())
+            hwd_fake.append(generated[index, :, :, :int(generated_lens[index])].cpu())
+            hwd_writers.append(batch["writer_ids"][index])
         if len(real_images) >= args.max_samples:
             break
     real_images, fake_images = real_images[:args.max_samples], fake_images[:args.max_samples]
+    hwd_real, hwd_fake = hwd_real[:args.max_samples], hwd_fake[:args.max_samples]
+    hwd_writers = hwd_writers[:args.max_samples]
+    del G, E, W, R, checkpoint
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     inception = inception_v3(weights=Inception_V3_Weights.DEFAULT)
     inception.fc = torch.nn.Identity()
     inception.eval().to(device)
     real_features = inception_features(inception, real_images, device)
     fake_features = inception_features(inception, fake_images, device)
+    del inception
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    hwd_backbone = load_hwd_backbone(device, args.hwd_checkpoint or None)
+    hwd_value = handwriting_distance(hwd_real, hwd_fake, hwd_writers, hwd_backbone, device)
+    del hwd_backbone
     metrics = {"fid": fid(real_features, fake_features), "kid": kid(real_features, fake_features),
+               "hwd": hwd_value, "hwd_writers": len(set(hwd_writers)),
+               "hwd_backbone": args.hwd_checkpoint or HWD_VGG16_URL,
                "cer": char_errors / max(1, char_total), "wer": word_errors / max(1, word_total),
                "diversity_l1": float(np.mean(diversities)),
                "independent_recognizer": independent, "samples": len(real_images)}
@@ -172,6 +191,8 @@ def main() -> None:
                         help="Independent IAM recognizer state dict for reportable CER/WER")
     parser.add_argument("--output", required=True)
     parser.add_argument("--max-samples", type=int, default=512)
+    parser.add_argument("--hwd-checkpoint", default=None,
+                        help="Optional local official Font² VGG-16 checkpoint; downloads it otherwise")
     args = parser.parse_args()
     print(json.dumps(evaluate(args), indent=2))
 
