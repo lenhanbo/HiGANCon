@@ -45,6 +45,15 @@ writers with seed 42, and writes deterministic 80/10/10 writer-disjoint manifest
 python prepare_iam.py --dataset-root "$DATASET_ROOT" --output /kaggle/working/data --seed 42
 ```
 
+On Kaggle, the helper scripts take ordinary positional arguments; they do not require
+environment variables:
+
+```bash
+bash scripts/kaggle_setup.sh "$DATASET_ROOT"
+bash scripts/kaggle_run.sh "$DATASET_ROOT" "$RUN_MODE" "$RESUME_PATH" \
+  "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS"
+```
+
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
 normalized to `[-1,1]`, then padded with `-1` to a width divisible by 16.
 

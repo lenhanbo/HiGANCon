@@ -1,0 +1,96 @@
+device: cuda:0
+seed: 123456
+img_height: 32
+char_width: 16
+training:
+  epochs: 70
+  lr_policy: linear
+  start_decay_epoch: 25
+  n_epochs_decay: 45
+  batch_size: 16
+  writers_per_batch: 8
+  num_workers: 2
+  amp: true
+  lr: 2.0e-4
+  adam_b1: 0.5
+  adam_b2: 0.999
+  lambda_kl: 0.0001
+  lexicon: data/english_words.txt
+  max_word_len: 20
+  num_critic_train: 4
+  print_every_steps: 20
+  save_every_steps: 1000
+contrastive:
+  lambda_con: 0.1
+  temperature: 0.07
+  warmup_epochs: 5
+  ramp_epochs: 5
+GenModel:
+  G_ch: 64
+  style_dim: 128
+  bottom_width: 4
+  bottom_height: 4
+  resolution: 32
+  G_kernel_size: 3
+  G_attn: '64'
+  n_class: 72
+  num_G_SVs: 1
+  num_G_SV_itrs: 1
+  G_shared: false
+  shared_dim: 0
+  no_hier: false
+  cross_replica: false
+  mybn: false
+  BN_eps: 1.0e-05
+  SN_eps: 1.0e-08
+  init: N02
+  G_param: SN
+  norm_style: bn
+  bn_linear: SN
+  input_nc: 1
+  one_hot: true
+  first_layer: true
+  one_hot_k: 1
+DiscModel:
+  D_ch: 64
+  D_wide: true
+  resolution: 32
+  D_kernel_size: 3
+  D_attn: '64'
+  n_class: 72
+  num_D_SVs: 1
+  num_D_SV_itrs: 1
+  SN_eps: 1.0e-08
+  output_dim: 1
+  init: N02
+  D_param: SN
+  bn_linear: SN
+  input_nc: 1
+  one_hot: true
+OcrModel:
+  resolution: 16
+  max_dim: 256
+  in_channel: 1
+  norm: bn
+  init: none
+  dropout: 0.0
+  n_class: 72
+  rnn_depth: 0
+  bidirectional: false
+EncModel:
+  style_dim: 96
+  resolution: 16
+  max_dim: 256
+  in_channel: 1
+  init: none
+  norm: bn
+  SN_param: false
+  share_wid: true
+WidModel:
+  n_writer: 1
+  resolution: 16
+  max_dim: 256
+  in_channel: 1
+  init: none
+  norm: bn
+  SN_param: false

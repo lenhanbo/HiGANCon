@@ -1,31 +1,24 @@
-import os
-from datetime import datetime
 import argparse
 
+from higan_contrastive.trainer import HiGANTrainer
 from lib.utils import yaml2config
-from networks import get_model
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except ModuleNotFoundError:
-    from tensorboardX import SummaryWriter
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train baseline or generated-style SupCon HiGAN")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--dataset-root", required=True)
+    parser.add_argument("--manifest-root", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--resume", default=None)
+    parser.add_argument("--max-hours", type=float, default=None)
+    parser.add_argument("--smoke-test", action="store_true")
+    args = parser.parse_args()
+    trainer = HiGANTrainer(yaml2config(args.config), args.config, args.dataset_root,
+                           args.manifest_root, args.output, args.resume, args.max_hours)
+    trainer.train(smoke_test=args.smoke_test)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="config")
-    parser.add_argument(
-        "--config",
-        nargs="?",
-        type=str,
-        default="configs/gan_iam.yml",
-        help="Configuration file to use",
-    )
-
-    args = parser.parse_args()
-    cfg = yaml2config(args.config)
-    run_id = datetime.strftime(datetime.now(), '%m-%d-%H-%M')
-    logdir = os.path.join("runs", os.path.basename(args.config)[:-4] + '-' + str(run_id))
-
-    model = get_model(cfg.model)(cfg, logdir)
-    model.train()
+    main()
 

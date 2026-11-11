@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.tmp_manifest/
+.tmp_smoke*/
+runs/
+outputs/
+data/*.hdf5
+*.pt
+*.pth
+run_bundle.tar.gz
