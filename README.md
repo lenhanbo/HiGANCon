@@ -51,10 +51,15 @@ environment variables:
 
 ```bash
 bash scripts/kaggle_setup.sh "$DATASET_ROOT"
-bash scripts/kaggle_run.sh "$DATASET_ROOT" "$RUN_MODE" "$RESUME_PATH" \
-  "$RECOGNIZER_CHECKPOINT" "$MAX_HOURS" "$HWD_CHECKPOINT" "$EVAL_MAX_SAMPLES" \
-  "$CONTRASTIVE_START_STEP" "$CONTRASTIVE_RAMP_STEPS" "$MAX_STEPS" \
-  "$SKIP_HWD"
+bash scripts/kaggle_run.sh \
+  --dataset-root "$DATASET_ROOT" \
+  --run-mode "$RUN_MODE" \
+  --max-hours "$MAX_HOURS" \
+  --max-steps "$MAX_STEPS" \
+  --contrastive-start-step "$CONTRASTIVE_START_STEP" \
+  --contrastive-ramp-steps "$CONTRASTIVE_RAMP_STEPS" \
+  --eval-max-samples "$EVAL_MAX_SAMPLES" \
+  --skip-hwd
 ```
 
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
