@@ -124,6 +124,7 @@ def split_records_by_writer(records: Sequence[dict], seed: int = 42) -> tuple[di
     validate_splits(splits)
     metadata = {
         "schema_version": 1,
+        "dataset_format": "iam_raw",
         "seed": seed,
         "ratios": [0.8, 0.1, 0.1],
         "writer_lists": writer_splits,
@@ -207,17 +208,21 @@ class IAMManifestDataset(Dataset):
 
 
 def collate_words(batch: Sequence[dict]) -> dict:
-    image_lens = torch.tensor([item["image"].shape[-1] for item in batch], dtype=torch.int32)
-    padded_lens = ((image_lens + 15) // 16) * 16
-    max_width = int(padded_lens.max())
-    images = torch.full((len(batch), 1, 32, max_width), -1.0)
-    for index, item in enumerate(batch):
-        images[index, :, :, :item["image"].shape[-1]] = item["image"]
+    def pad_images(key: str) -> tuple[torch.Tensor, torch.Tensor]:
+        image_lens = torch.tensor([item[key].shape[-1] for item in batch], dtype=torch.int32)
+        padded_lens = ((image_lens + 15) // 16) * 16
+        max_width = int(padded_lens.max())
+        images = torch.full((len(batch), 1, 32, max_width), -1.0)
+        for index, item in enumerate(batch):
+            images[index, :, :, :item[key].shape[-1]] = item[key]
+        return images, padded_lens
+
+    images, padded_lens = pad_images("image")
     label_lens = torch.tensor([len(item["label"]) for item in batch], dtype=torch.int32)
     labels = torch.zeros((len(batch), int(label_lens.max())), dtype=torch.long)
     for index, item in enumerate(batch):
         labels[index, :len(item["label"])] = item["label"]
-    return {
+    result = {
         "images": images,
         "image_lens": padded_lens,
         "labels": labels,
@@ -227,6 +232,19 @@ def collate_words(batch: Sequence[dict]) -> dict:
         "word_ids": [item["word_id"] for item in batch],
         "texts": [item["text"] for item in batch],
     }
+    if "metric_real_image" in batch[0]:
+        result["metric_real_images"], result["metric_real_lens"] = pad_images("metric_real_image")
+    return result
+
+
+def load_experiment_dataset(dataset_format: str, dataset_root: str | Path,
+                            manifest_root: str | Path, split: str):
+    if dataset_format == "iam_raw":
+        return IAMManifestDataset(dataset_root, Path(manifest_root) / f"{split}.jsonl")
+    if dataset_format == "higan_hdf5":
+        from .hdf5_data import load_higan_hdf5_dataset
+        return load_higan_hdf5_dataset(dataset_root, split)
+    raise ValueError(f"Unsupported dataset format: {dataset_format}")
 
 
 class StatefulWriterPairBatchSampler(Sampler[list[int]]):

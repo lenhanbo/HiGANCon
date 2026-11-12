@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DATASET_ROOT=""
+DATASET_FORMAT="iam_raw"
+MANIFEST_ROOT=""
 RUN_MODE="contrastive"
 RESUME_PATH=""
 RECOGNIZER_CHECKPOINT=""
@@ -22,6 +24,8 @@ Usage:
 
 Options:
   --run-mode baseline|contrastive
+  --dataset-format iam_raw|higan_hdf5
+  --manifest-root PATH
   --resume PATH
   --recognizer-checkpoint PATH
   --max-hours HOURS
@@ -53,11 +57,15 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   SKIP_HWD="${11:-false}"
   FID_KID_PROTOCOL="${12:-higan}"
   EVAL_SEED="${13:-123456}"
+  DATASET_FORMAT="${14:-iam_raw}"
+  MANIFEST_ROOT="${15:-}"
 else
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dataset-root) DATASET_ROOT="${2-}"; shift 2 ;;
       --run-mode) RUN_MODE="${2-}"; shift 2 ;;
+      --dataset-format) DATASET_FORMAT="${2-}"; shift 2 ;;
+      --manifest-root) MANIFEST_ROOT="${2-}"; shift 2 ;;
       --resume) RESUME_PATH="${2-}"; shift 2 ;;
       --recognizer-checkpoint) RECOGNIZER_CHECKPOINT="${2-}"; shift 2 ;;
       --max-hours) MAX_HOURS="${2-}"; shift 2 ;;
@@ -82,10 +90,22 @@ if [[ -z "$DATASET_ROOT" ]]; then
 fi
 
 RUN_MODE="${RUN_MODE,,}"
+DATASET_FORMAT="${DATASET_FORMAT,,}"
 
 if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "contrastive" ]]; then
   printf 'RUN_MODE must be baseline or contrastive; received <%q>\n' "$RUN_MODE" >&2
   exit 2
+fi
+if [[ "$DATASET_FORMAT" != "iam_raw" && "$DATASET_FORMAT" != "higan_hdf5" ]]; then
+  echo "DATASET_FORMAT must be iam_raw or higan_hdf5" >&2
+  exit 2
+fi
+if [[ -z "$MANIFEST_ROOT" ]]; then
+  if [[ "$DATASET_FORMAT" == "higan_hdf5" ]]; then
+    MANIFEST_ROOT="/kaggle/working/data_higan_hdf5"
+  else
+    MANIFEST_ROOT="/kaggle/working/data"
+  fi
 fi
 FID_KID_PROTOCOL="${FID_KID_PROTOCOL,,}"
 if [[ "$FID_KID_PROTOCOL" != "higan" && "$FID_KID_PROTOCOL" != "torchvision" ]]; then
@@ -101,7 +121,8 @@ if [[ -n "$RESUME_PATH" ]]; then
 fi
 
 python train.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
-  --manifest-root /kaggle/working/data --output "$OUTPUT" --max-hours "$MAX_HOURS" \
+  --dataset-format "$DATASET_FORMAT" --manifest-root "$MANIFEST_ROOT" \
+  --output "$OUTPUT" --max-hours "$MAX_HOURS" \
   --max-steps "$MAX_STEPS" \
   "${resume_args[@]}" \
   --contrastive-start-step "$CONTRASTIVE_START_STEP" \
@@ -118,9 +139,14 @@ elif [[ -n "$HWD_CHECKPOINT" ]]; then
   hwd_args=(--hwd-checkpoint "$HWD_CHECKPOINT")
 fi
 python evaluate.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
-  --manifest-root /kaggle/working/data --checkpoint "$OUTPUT/checkpoints/last.pt" \
+  --dataset-format "$DATASET_FORMAT" --manifest-root "$MANIFEST_ROOT" \
+  --checkpoint "$OUTPUT/checkpoints/last.pt" \
   --output "$OUTPUT/evaluation.json" --max-samples "$EVAL_MAX_SAMPLES" \
   --fid-kid-protocol "$FID_KID_PROTOCOL" --eval-seed "$EVAL_SEED" \
   "${recognizer_args[@]}" "${hwd_args[@]}"
 
-tar -czf /kaggle/working/run_bundle.tar.gz -C /kaggle/working data outputs
+bundle_items=(outputs)
+if [[ "$(dirname "$MANIFEST_ROOT")" == "/kaggle/working" ]]; then
+  bundle_items+=("$(basename "$MANIFEST_ROOT")")
+fi
+tar -czf /kaggle/working/run_bundle.tar.gz -C /kaggle/working "${bundle_items[@]}"

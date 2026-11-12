@@ -46,6 +46,48 @@ writers with seed 42, and writes deterministic 80/10/10 writer-disjoint manifest
 python prepare_iam.py --dataset-root "$DATASET_ROOT" --output /kaggle/working/data --seed 42
 ```
 
+### Original HiGAN HDF5 backend
+
+For protocol-level comparison with upstream HiGAN, set `DATASET_FORMAT=higan_hdf5`
+and point `DATASET_ROOT` to a directory containing exactly:
+
+```text
+trnvalset_words32.hdf5
+testset_words32.hdf5
+testset_words32_OrgSz.hdf5
+```
+
+The original README sometimes names the last file
+`testset_words32d_OrgSz.hdf5`; both spellings are accepted automatically.
+
+Validate the files and create a content-derived split hash with:
+
+```bash
+python prepare_higan_hdf5.py \
+  --hdf5-root "$DATASET_ROOT" \
+  --output /kaggle/working/data_higan_hdf5
+```
+
+This backend follows the upstream split exactly: `trnvalset_words32.hdf5` is the
+entire training set and `testset_words32.hdf5` is the style-reference test set. There
+is no separate validation split. During evaluation, aligned real images come from
+`testset_words32_OrgSz.hdf5`, matching HiGAN's FID/KID path. HDF5 is read lazily and
+`wids` drives the same two-distinct-indices-per-writer SupCon sampler; no PNG export is
+performed. The original HiGAN code evaluates on `test` from epoch 30 and chooses its
+`best.pth` by test KID. Prefer the final `last.pt` when you want to avoid that test-set
+model-selection behavior.
+
+Training with this backend uses:
+
+```bash
+bash scripts/kaggle_setup.sh "$DATASET_ROOT" higan_hdf5 /kaggle/working/data_higan_hdf5
+bash scripts/kaggle_run.sh \
+  --dataset-root "$DATASET_ROOT" \
+  --dataset-format higan_hdf5 \
+  --manifest-root /kaggle/working/data_higan_hdf5 \
+  --run-mode contrastive
+```
+
 On Kaggle, the helper scripts take ordinary positional arguments; they do not require
 environment variables:
 
@@ -170,8 +212,8 @@ and saves paged `REFERENCE | QUERY TEXT | GENERATED` galleries plus JSONL metada
 
 ```bash
 bash scripts/kaggle_eval_hf.sh \
-  --dataset-root "$DATASET_ROOT" \
   --checkpoint-link "https://huggingface.co/owner/repo/resolve/main/latest.pt" \
+  --dataset-format higan_hdf5 \
   --run-mode contrastive \
   --eval-max-samples 0 \
   --preview-samples 64 \
@@ -192,6 +234,11 @@ lexicon query for each reference (`--preview-query-mode random`), while metric i
 continue using ground-truth queries. Use `--preview-query-mode dataset` to show the
 reference's own word, or `--preview-query-text "hello"` to apply one fixed query to all
 references.
+
+When the same Hub repository contains the three root-level HDF5 files, the helper
+downloads them automatically; `--dataset-root` is unnecessary. If they are stored in
+a folder such as `data/`, pass `--hdf5-prefix data`. Supplying `--dataset-root` uses
+already attached/downloaded HDF5 files instead.
 
 ## Kaggle and tests
 

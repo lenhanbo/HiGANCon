@@ -19,7 +19,7 @@ from networks.module import Recognizer, StyleEncoder, WriterIdentifier
 from networks.utils import get_scheduler, rand_clip, set_requires_grad
 
 from .checkpoint import atomic_torch_save, file_hash, git_commit, restore_rng_state, rng_state, state_hash
-from .data import IAMManifestDataset, StatefulWriterPairBatchSampler, collate_words
+from .data import StatefulWriterPairBatchSampler, collate_words, load_experiment_dataset
 from .losses import (contrastive_weight_at_step, kl_loss, optional_contrastive_loss,
                      supervised_contrastive_loss)
 from .preview import save_preview
@@ -40,12 +40,14 @@ class HiGANTrainer:
                  output: str, resume: str | None = None, max_hours: float | None = None,
                  max_steps: int | None = None,
                  contrastive_start_step: int | None = None,
-                 contrastive_ramp_steps: int | None = None):
+                 contrastive_ramp_steps: int | None = None,
+                 dataset_format: str = "iam_raw"):
         self.cfg = cfg
         self.config_path = Path(config_path).resolve()
         self.manifest_root = Path(manifest_root).resolve()
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
+        self.dataset_format = dataset_format
         (self.output / "checkpoints").mkdir(exist_ok=True)
         self.max_hours = max_hours
         self.max_steps = int(max_steps) if max_steps is not None and int(max_steps) > 0 else None
@@ -61,12 +63,16 @@ class HiGANTrainer:
         self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
         seed_everything(int(cfg.seed))
 
-        manifest = self.manifest_root / "train.jsonl"
         metadata_path = self.manifest_root / "split_metadata.json"
         self.split_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata_format = self.split_metadata.get("dataset_format", "iam_raw")
+        if metadata_format != self.dataset_format:
+            raise ValueError(
+                f"Dataset format mismatch: CLI={self.dataset_format}, metadata={metadata_format}")
         self.split_hash = self.split_metadata["split_hash"]
         self.config_hash = file_hash(self.config_path)
-        self.dataset = IAMManifestDataset(dataset_root, manifest)
+        self.dataset = load_experiment_dataset(
+            self.dataset_format, dataset_root, self.manifest_root, "train")
         writers_per_batch = int(cfg.training.writers_per_batch)
         if int(cfg.training.batch_size) != 2 * writers_per_batch:
             raise ValueError("training.batch_size must equal 2 * training.writers_per_batch")
@@ -129,6 +135,7 @@ class HiGANTrainer:
             "split_hash": self.split_hash, "initial_state_hash": self.initial_state_hash,
             "device": str(self.device), "train_images": len(self.dataset),
             "train_writers": len(self.dataset.writer_to_index),
+            "dataset_format": self.dataset_format,
             "contrastive_start_step": self.contrastive_start_step,
             "contrastive_ramp_steps": self.contrastive_ramp_steps,
             "max_steps_this_session": self.max_steps,
@@ -349,6 +356,7 @@ class HiGANTrainer:
             "sampler": self.sampler.state_dict(), "loader_generator": self.loader_generator.get_state(),
             "rng": rng_state(), "git_commit": git_commit(),
             "config_hash": self.config_hash, "split_hash": self.split_hash,
+            "dataset_format": self.dataset_format,
             "initial_state_hash": self.initial_state_hash,
             "contrastive_schedule": {
                 "start_step": self.contrastive_start_step,
@@ -370,6 +378,8 @@ class HiGANTrainer:
             raise ValueError("Checkpoint config hash does not match this run")
         if checkpoint["split_hash"] != self.split_hash:
             raise ValueError("Checkpoint split hash does not match manifests")
+        if checkpoint.get("dataset_format", "iam_raw") != self.dataset_format:
+            raise ValueError("Checkpoint dataset format does not match this run")
         if checkpoint["initial_state_hash"] != self.initial_state_hash:
             raise ValueError("Checkpoint was created from a different initialization")
         expected_schedule = {"start_step": self.contrastive_start_step,

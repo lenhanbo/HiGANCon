@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
 from higan_contrastive.checkpoint import file_hash
-from higan_contrastive.data import IAMManifestDataset, collate_words
+from higan_contrastive.data import collate_words, load_experiment_dataset
 from higan_contrastive.eval_preview import save_evaluation_previews
 from higan_contrastive.metrics import (HWD_VGG16_URL, handwriting_distance,
                                        load_hwd_backbone)
@@ -238,11 +238,18 @@ def evaluate(args) -> dict:
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     metadata = json.loads((Path(args.manifest_root) / "split_metadata.json").read_text(encoding="utf-8"))
+    metadata_format = metadata.get("dataset_format", "iam_raw")
+    if metadata_format != args.dataset_format:
+        raise ValueError(
+            f"Dataset format mismatch: CLI={args.dataset_format}, metadata={metadata_format}")
     if checkpoint["config_hash"] != file_hash(args.config):
         raise ValueError("Checkpoint/config hash mismatch")
     if checkpoint["split_hash"] != metadata["split_hash"]:
         raise ValueError("Checkpoint/manifest split hash mismatch")
-    dataset = IAMManifestDataset(args.dataset_root, Path(args.manifest_root) / "test.jsonl")
+    if checkpoint.get("dataset_format", "iam_raw") != args.dataset_format:
+        raise ValueError("Checkpoint dataset format does not match evaluation dataset")
+    dataset = load_experiment_dataset(
+        args.dataset_format, args.dataset_root, args.manifest_root, "test")
     cfg.WidModel.n_writer = checkpoint["models"]["W"]["linear_wid.2.weight"].shape[0]
     G = Generator(**cfg.GenModel).to(device)
     E = StyleEncoder(**cfg.EncModel).to(device)
@@ -281,6 +288,8 @@ def evaluate(args) -> dict:
                 batch = trim_batch(batch, remaining)
         real = batch["images"].to(device)
         lengths = batch["image_lens"].to(device)
+        metric_real = batch.get("metric_real_images", batch["images"]).to(device)
+        metric_real_lens = batch.get("metric_real_lens", batch["image_lens"]).to(device)
         labels = batch["labels"].to(device)
         label_lens = batch["label_lens"].to(device)
         mu = E(real, lengths, W.cnn_backbone)
@@ -324,7 +333,8 @@ def evaluate(args) -> dict:
             word_errors += edit_distance(truth.split(), prediction.split())
             word_total += len(truth.split())
         for index in range(len(real)):
-            real_image = real[index, :, :, :int(lengths[index])].cpu()
+            reference_image = real[index, :, :, :int(lengths[index])].cpu()
+            real_image = metric_real[index, :, :, :int(metric_real_lens[index])].cpu()
             fake_image = generated[index, :, :, :int(generated_lens[index])].cpu()
             sample_index = len(real_images)
             real_images.append(real_image)
@@ -337,7 +347,7 @@ def evaluate(args) -> dict:
                     "word_id": batch["word_ids"][index],
                     "reference_text": batch["texts"][index],
                     "query": gallery_queries[index],
-                    "reference": real_image,
+                    "reference": reference_image,
                     "generated": gallery_image,
                 })
             if not args.skip_hwd:
@@ -356,7 +366,8 @@ def evaluate(args) -> dict:
                "cer": char_errors / max(1, char_total), "wer": word_errors / max(1, word_total),
                "diversity_l1": float(np.mean(diversities)),
                "independent_recognizer": independent, "samples": len(real_images),
-               "eval_seed": int(args.eval_seed), **protocol_metadata}
+               "eval_seed": int(args.eval_seed), "dataset_format": args.dataset_format,
+               **protocol_metadata}
     if args.skip_hwd:
         metrics.update({"hwd": None, "hwd_skipped": True})
     else:
@@ -387,6 +398,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a HiGAN checkpoint")
     parser.add_argument("--config", required=True)
     parser.add_argument("--dataset-root", required=True)
+    parser.add_argument("--dataset-format", choices=("iam_raw", "higan_hdf5"), default="iam_raw")
     parser.add_argument("--manifest-root", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--recognizer-checkpoint", default=None,
