@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from evaluate import kid, retrieval_metrics, trim_batch
+from evaluate import higan_inception_features, kid, retrieval_metrics, trim_batch
 from higan_contrastive.metrics import handwriting_distance
 
 
@@ -48,3 +48,19 @@ def test_trim_batch_caps_final_evaluation_batch():
     assert trimmed["images"].shape[0] == 2
     assert trimmed["texts"] == ["a", "b"]
     assert trimmed["unchanged"] == "value"
+
+
+def test_higan_fid_preprocessing_pads_to_original_width_and_range():
+    class RecordingInception(nn.Module):
+        def forward(self, images):
+            self.shape = tuple(images.shape)
+            self.value_range = (float(images.min()), float(images.max()))
+            return [images.mean(dim=(2, 3), keepdim=True)]
+
+    model = RecordingInception()
+    images = [torch.full((1, 32, 17), -1.0), torch.full((1, 32, 41), 1.0)]
+    features = higan_inception_features(
+        model, images, torch.device("cpu"), max_img_width=320, batch_size=16)
+    assert model.shape == (2, 3, 32, 320)
+    assert model.value_range == (0.0, 1.0)
+    assert features.shape == (2, 3)

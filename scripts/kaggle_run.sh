@@ -8,6 +8,8 @@ RECOGNIZER_CHECKPOINT=""
 MAX_HOURS="11.5"
 HWD_CHECKPOINT=""
 EVAL_MAX_SAMPLES="0"
+FID_KID_PROTOCOL="higan"
+EVAL_SEED="123456"
 CONTRASTIVE_START_STEP="28841"
 CONTRASTIVE_RAMP_STEPS="28840"
 MAX_STEPS="0"
@@ -27,6 +29,8 @@ Options:
   --contrastive-start-step STEP
   --contrastive-ramp-steps STEPS
   --eval-max-samples COUNT          0 means the full test manifest
+  --fid-kid-protocol higan|torchvision
+  --eval-seed SEED
   --hwd-checkpoint PATH_OR_HF_URI
   --skip-hwd
 
@@ -47,6 +51,8 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   CONTRASTIVE_RAMP_STEPS="${9:-28840}"
   MAX_STEPS="${10:-0}"
   SKIP_HWD="${11:-false}"
+  FID_KID_PROTOCOL="${12:-higan}"
+  EVAL_SEED="${13:-123456}"
 else
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,6 +65,8 @@ else
       --contrastive-start-step) CONTRASTIVE_START_STEP="${2-}"; shift 2 ;;
       --contrastive-ramp-steps) CONTRASTIVE_RAMP_STEPS="${2-}"; shift 2 ;;
       --eval-max-samples) EVAL_MAX_SAMPLES="${2-}"; shift 2 ;;
+      --fid-kid-protocol) FID_KID_PROTOCOL="${2-}"; shift 2 ;;
+      --eval-seed) EVAL_SEED="${2-}"; shift 2 ;;
       --hwd-checkpoint) HWD_CHECKPOINT="${2-}"; shift 2 ;;
       --skip-hwd) SKIP_HWD="true"; shift ;;
       --help|-h) usage; exit 0 ;;
@@ -77,6 +85,11 @@ RUN_MODE="${RUN_MODE,,}"
 
 if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "contrastive" ]]; then
   printf 'RUN_MODE must be baseline or contrastive; received <%q>\n' "$RUN_MODE" >&2
+  exit 2
+fi
+FID_KID_PROTOCOL="${FID_KID_PROTOCOL,,}"
+if [[ "$FID_KID_PROTOCOL" != "higan" && "$FID_KID_PROTOCOL" != "torchvision" ]]; then
+  printf 'FID_KID_PROTOCOL must be higan or torchvision; received <%q>\n' "$FID_KID_PROTOCOL" >&2
   exit 2
 fi
 CONFIG="configs/kaggle_${RUN_MODE}.yaml"
@@ -107,6 +120,7 @@ fi
 python evaluate.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --manifest-root /kaggle/working/data --checkpoint "$OUTPUT/checkpoints/last.pt" \
   --output "$OUTPUT/evaluation.json" --max-samples "$EVAL_MAX_SAMPLES" \
+  --fid-kid-protocol "$FID_KID_PROTOCOL" --eval-seed "$EVAL_SEED" \
   "${recognizer_args[@]}" "${hwd_args[@]}"
 
 tar -czf /kaggle/working/run_bundle.tar.gz -C /kaggle/working data outputs

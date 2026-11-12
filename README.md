@@ -122,6 +122,8 @@ python evaluate.py \
   --manifest-root /kaggle/working/data \
   --checkpoint /kaggle/working/outputs/contrastive/checkpoints/last.pt \
   --recognizer-checkpoint /kaggle/input/independent-iam-recognizer/model.pt \
+  --fid-kid-protocol higan \
+  --eval-seed 123456 \
   --output /kaggle/working/outputs/contrastive/evaluation.json
 ```
 
@@ -140,6 +142,16 @@ independent CER/WER reporting,
 supply an IAM recognizer trained outside both experiments; otherwise the report marks
 `independent_recognizer: false`.
 
+`--fid-kid-protocol higan` is the Kaggle default and reproduces the upstream HiGAN
+metric settings: images are padded to at least `char_width * max_word_len = 320`,
+features come from the patched TensorFlow-FID Inception at dimension 2048, and KID
+uses a degree-3 polynomial kernel over 50 subsets of at most 1,000 samples. As in
+HiGAN, reported KID is multiplied by 100. The output records the protocol, backbone,
+subset settings, width and KID scale. `--fid-kid-protocol torchvision` retains this
+repository's previous fixed-`32x128` ImageNet-Inception evaluator for old-run
+comparisons. `--eval-seed 123456` fixes generation noise so baseline and contrastive
+receive identical evaluation noise.
+
 Evaluation walks `test.jsonl` sequentially with no shuffle and no dropped final batch,
 so every test image is evaluated exactly once. `EVAL_MAX_SAMPLES=0` (the default) means
 the complete test manifest; set a positive value only for a quicker capped run. KID is
@@ -149,6 +161,37 @@ materializing their full pairwise matrices.
 
 Success means improved writer retrieval and separation gap, CER degradation at most
 1 percentage point, and KID degradation at most 5% versus baseline.
+
+### Evaluate a checkpoint from Hugging Face
+
+The eval-only helper accepts a full Hub URL, `hf://` URI, or model repository ID. It
+does not train. It downloads the checkpoint, creates manifests when absent, evaluates,
+and saves paged `REFERENCE | QUERY TEXT | GENERATED` galleries plus JSONL metadata:
+
+```bash
+bash scripts/kaggle_eval_hf.sh \
+  --dataset-root "$DATASET_ROOT" \
+  --checkpoint-link "https://huggingface.co/owner/repo/resolve/main/latest.pt" \
+  --run-mode contrastive \
+  --eval-max-samples 0 \
+  --preview-samples 64 \
+  --preview-query-mode random \
+  --fid-kid-protocol higan \
+  --eval-seed 123456
+```
+
+`--preview-samples -1` writes a row for every evaluated test sample, `0` disables the
+gallery, and a positive value writes the first N sequential samples. Pages and
+`samples.jsonl` are stored under
+`/kaggle/working/hf_evaluations/<mode>/evaluation_previews/`. When passing only
+`owner/repo`, add `--checkpoint-filename latest.pt`; `--hf-revision` defaults to
+`main`. A private repository uses the standard `HF_TOKEN` environment variable, which
+can be supplied through Kaggle Secrets. The helper skips HWD by default; pass
+`--with-hwd` to enable it. The helper's gallery defaults to a deterministic different
+lexicon query for each reference (`--preview-query-mode random`), while metric images
+continue using ground-truth queries. Use `--preview-query-mode dataset` to show the
+reference's own word, or `--preview-query-text "hello"` to apply one fixed query to all
+references.
 
 ## Kaggle and tests
 
