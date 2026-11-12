@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from pathlib import Path
+
+# Support the documented direct invocation: python scripts/download_hf_hdf5.py ...
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
@@ -12,7 +18,7 @@ from scripts.download_hf_checkpoint import infer_repo_type, parse_source
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download the four original HiGAN HDF5 files")
+    parser = argparse.ArgumentParser(description="Download the three original HiGAN HDF5 files")
     parser.add_argument("source", help="Checkpoint HF URL, hf:// URI, or owner/repo")
     parser.add_argument("--revision", default="main")
     parser.add_argument(
