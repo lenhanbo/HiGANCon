@@ -26,6 +26,12 @@ def test_parse_huggingface_checkpoint_sources():
     assert infer_repo_type(
         "https://huggingface.co/datasets/lenhanbo/higancon/blob/main/higancon.pt"
     ) == "dataset"
+    assert parse_source(
+        "https://huggingface.co/datasets/lenhanbo/higancon",
+        "latest.pt", "main") == ("lenhanbo/higancon", "latest.pt", "main")
+    assert parse_source(
+        "datasets/lenhanbo/higancon", "latest.pt", "main"
+    ) == ("lenhanbo/higancon", "latest.pt", "main")
 
 
 def test_evaluation_gallery_contains_every_requested_sample(tmp_path: Path):

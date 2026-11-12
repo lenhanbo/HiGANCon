@@ -49,15 +49,20 @@ def parse_source(source: str, default_filename: str,
         parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
         if parts and parts[0] in {"datasets", "spaces", "models"}:
             parts = parts[1:]
+        if len(parts) == 2 and all(parts):
+            return "/".join(parts), default_filename, default_revision
         if len(parts) < 5 or parts[2] not in {"resolve", "blob"}:
             raise ValueError(
-                "Expected https://huggingface.co/owner/repo/resolve/revision/path/file.pt")
+                "Expected a Hugging Face repository URL or a /resolve|blob/ file URL")
         return "/".join(parts[:2]), "/".join(parts[4:]), parts[3]
 
     parts = source.split("/")
+    if len(parts) == 3 and parts[0] in {"datasets", "spaces", "models"}:
+        parts = parts[1:]
+        source = "/".join(parts)
     if len(parts) == 2 and all(parts):
         return source, default_filename, default_revision
-    raise ValueError("Use a Hugging Face URL, hf:// URI, or owner/repo model ID")
+    raise ValueError("Use a Hugging Face URL, hf:// URI, or owner/repo repository ID")
 
 
 def main() -> None:
