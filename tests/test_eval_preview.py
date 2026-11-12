@@ -5,7 +5,7 @@ from PIL import Image
 
 from higan_contrastive.eval_preview import save_evaluation_previews
 from evaluate import encode_query_texts
-from scripts.download_hf_checkpoint import parse_source
+from scripts.download_hf_checkpoint import infer_repo_type, parse_source
 
 
 def test_parse_huggingface_checkpoint_sources():
@@ -20,6 +20,12 @@ def test_parse_huggingface_checkpoint_sources():
         "alice/higan", "last.pt", "dev")
     assert parse_source("alice/higan", "latest.pt", "main") == (
         "alice/higan", "latest.pt", "main")
+    assert parse_source(
+        "https://huggingface.co/datasets/lenhanbo/higancon/blob/main/higancon.pt",
+        "ignored.pt", "ignored") == ("lenhanbo/higancon", "higancon.pt", "main")
+    assert infer_repo_type(
+        "https://huggingface.co/datasets/lenhanbo/higancon/blob/main/higancon.pt"
+    ) == "dataset"
 
 
 def test_evaluation_gallery_contains_every_requested_sample(tmp_path: Path):
