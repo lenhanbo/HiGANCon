@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
+import time
 from pathlib import Path
 
 import numpy as np
@@ -236,7 +238,9 @@ def encode_query_texts(texts: list[str], device: torch.device) -> tuple[torch.Te
 def evaluate(args) -> dict:
     cfg = yaml2config(args.config)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    print(f"[eval] device={device} checkpoint={args.checkpoint}", flush=True)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    print("[eval] checkpoint loaded; validating config and dataset metadata", flush=True)
     metadata = json.loads((Path(args.manifest_root) / "split_metadata.json").read_text(encoding="utf-8"))
     metadata_format = metadata.get("dataset_format", "iam_raw")
     if metadata_format != args.dataset_format:
@@ -250,6 +254,8 @@ def evaluate(args) -> dict:
         raise ValueError("Checkpoint dataset format does not match evaluation dataset")
     dataset = load_experiment_dataset(
         args.dataset_format, args.dataset_root, args.manifest_root, "test")
+    sample_limit = len(dataset) if args.max_samples <= 0 else min(len(dataset), args.max_samples)
+    print(f"[eval] test samples={len(dataset)} evaluating={sample_limit}", flush=True)
     cfg.WidModel.n_writer = checkpoint["models"]["W"]["linear_wid.2.weight"].shape[0]
     G = Generator(**cfg.GenModel).to(device)
     E = StyleEncoder(**cfg.EncModel).to(device)
@@ -265,6 +271,10 @@ def evaluate(args) -> dict:
 
     loader = DataLoader(dataset, batch_size=int(cfg.training.batch_size), shuffle=False,
                         drop_last=False, collate_fn=collate_words, num_workers=0)
+    total_batches = math.ceil(sample_limit / int(cfg.training.batch_size)) if sample_limit else 0
+    log_every = max(1, int(getattr(args, "log_every", 10)))
+    eval_started = time.perf_counter()
+    print(f"[eval] generating images: batches={total_batches} log_every={log_every}", flush=True)
     real_images, fake_images, hwd_real, hwd_fake, hwd_writers = [], [], [], [], []
     embeddings, writer_labels = [], []
     preview_samples = []
@@ -279,7 +289,7 @@ def evaluate(args) -> dict:
     diversities = []
     eval_generator = torch.Generator(device=device)
     eval_generator.manual_seed(int(args.eval_seed))
-    for batch in loader:
+    for batch_index, batch in enumerate(loader, 1):
         if args.max_samples > 0:
             remaining = args.max_samples - len(real_images)
             if remaining <= 0:
@@ -354,12 +364,26 @@ def evaluate(args) -> dict:
                 hwd_real.append(real_image)
                 hwd_fake.append(fake_image)
                 hwd_writers.append(batch["writer_ids"][index])
+        if batch_index == 1 or batch_index % log_every == 0 or len(real_images) >= sample_limit:
+            elapsed = time.perf_counter() - eval_started
+            rate = len(real_images) / elapsed if elapsed > 0 else 0.0
+            remaining = max(0, sample_limit - len(real_images))
+            eta = remaining / rate if rate > 0 else 0.0
+            percent = 100.0 * len(real_images) / sample_limit if sample_limit else 100.0
+            print(
+                f"[eval] batch {batch_index}/{total_batches} | "
+                f"samples {len(real_images)}/{sample_limit} ({percent:.1f}%) | "
+                f"{rate:.2f} samples/s | elapsed {elapsed:.1f}s | ETA {eta:.1f}s",
+                flush=True,
+            )
     del G, E, W, R, checkpoint
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     max_img_width = int(cfg.char_width) * int(cfg.training.max_word_len)
+    print(f"[eval] generation complete; computing {args.fid_kid_protocol} FID/KID", flush=True)
     fid_value, kid_value, protocol_metadata = fid_kid_for_protocol(
         args.fid_kid_protocol, real_images, fake_images, device, max_img_width)
+    print(f"[eval] FID/KID complete: fid={fid_value:.6f} kid={kid_value:.6f}", flush=True)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     metrics = {"fid": fid_value, "kid": kid_value,
@@ -370,18 +394,24 @@ def evaluate(args) -> dict:
                **protocol_metadata}
     if args.skip_hwd:
         metrics.update({"hwd": None, "hwd_skipped": True})
+        print("[eval] HWD skipped", flush=True)
     else:
+        print("[eval] loading HWD backbone and computing HWD", flush=True)
         hwd_backbone = load_hwd_backbone(device, args.hwd_checkpoint or None)
         hwd_value = handwriting_distance(hwd_real, hwd_fake, hwd_writers, hwd_backbone, device)
         del hwd_backbone
         metrics.update({"hwd": hwd_value, "hwd_skipped": False,
                         "hwd_writers": len(set(hwd_writers)),
                         "hwd_backbone": args.hwd_checkpoint or HWD_VGG16_URL})
+        print(f"[eval] HWD complete: hwd={hwd_value:.6f}", flush=True)
+    print("[eval] computing writer retrieval metrics", flush=True)
     metrics.update(retrieval_metrics(torch.cat(embeddings), torch.cat(writer_labels)))
+    print("[eval] writer retrieval complete", flush=True)
     preview_pages = []
     if preview_samples:
         preview_root = (Path(args.preview_dir) if args.preview_dir else
                         Path(args.output).parent / "evaluation_previews")
+        print(f"[eval] writing {len(preview_samples)} preview samples to {preview_root}", flush=True)
         preview_pages = save_evaluation_previews(
             preview_samples, preview_root, page_size=int(args.preview_page_size))
     metrics.update({"preview_samples": len(preview_samples),
@@ -391,6 +421,7 @@ def evaluate(args) -> dict:
                     "preview_query_text": args.preview_query_text})
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"[eval] complete; metrics written to {args.output}", flush=True)
     return metrics
 
 
@@ -410,6 +441,8 @@ def main() -> None:
                         help="higan reproduces upstream FID/KID preprocessing, weights, and KID x100")
     parser.add_argument("--eval-seed", type=int, default=123456,
                         help="Fixed seed for generated evaluation noise")
+    parser.add_argument("--log-every", type=int, default=10,
+                        help="Print evaluation progress every N batches (default: 10)")
     parser.add_argument("--preview-samples", type=int, default=0,
                         help="Gallery samples: 0 disables, positive caps, -1 saves every evaluated sample")
     parser.add_argument("--preview-page-size", type=int, default=16)
@@ -424,6 +457,8 @@ def main() -> None:
     parser.add_argument("--skip-hwd", action="store_true",
                         help="Skip HWD backbone download/computation; writes hwd=null")
     args = parser.parse_args()
+    if args.log_every < 1:
+        parser.error("--log-every must be positive")
     if args.preview_samples < -1:
         parser.error("--preview-samples must be -1, 0, or a positive integer")
     if args.preview_page_size < 1:
