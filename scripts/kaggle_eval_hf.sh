@@ -174,8 +174,5 @@ python evaluate.py \
   --preview-dir "$OUTPUT_ROOT/evaluation_previews" \
   "${preview_query_args[@]}" "${recognizer_args[@]}" "${hwd_args[@]}"
 
-tar -czf "$OUTPUT_ROOT/evaluation_bundle.tar.gz" -C "$OUTPUT_ROOT" \
-  evaluation.json evaluation_previews
 printf 'Metrics: %s\n' "$OUTPUT_ROOT/evaluation.json"
 printf 'Preview gallery: %s\n' "$OUTPUT_ROOT/evaluation_previews"
-printf 'Bundle: %s\n' "$OUTPUT_ROOT/evaluation_bundle.tar.gz"

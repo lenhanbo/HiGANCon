@@ -136,14 +136,16 @@ initial-state hash. `--max-hours` saves `last.pt` before stopping.
 step N; `0` disables this ceiling. On resume the restored global step is used, so raising
 the ceiling continues training while lowering it below the saved step exits immediately.
 
-Training saves a deterministic visual panel every 200 steps under `previews/`. It shows
+Kaggle runs save a deterministic visual panel every 500 steps under `previews/` (the
+YAML default remains 200 for checkpoint compatibility). It shows
 `REAL REFERENCE | RANDOM SYNTHETIC STYLE | REFERENCE-GUIDED | SUPCON SHARED TEXT/NOISE`.
 The random column uses one `z ~ N(0,I)` shared by every row, so multiple texts reveal one
 synthetic style; it has no real writer identity. The adjacent JSON records its seed and
 all 128 latent values. SupCon rows preserve sampler order, so each adjacent pair belongs
 to one writer and uses the same text/noise. Preview generation uses a local RNG and eval
 mode, so it does not advance training RNG or BatchNorm statistics. Change
-`preview_every_steps` or `preview_items` in both experiment configs if needed.
+Pass `--preview-every-steps N` to `train.py` or `scripts/kaggle_run.sh` to change the
+runtime interval without changing the config hash; `0` disables training previews.
 
 Console loss records are averages over `print_every_steps` training batches. This is
 important because D-side runs every batch while G/E-side runs every four batches; the
@@ -245,7 +247,8 @@ already attached/downloaded HDF5 files instead.
 Open [`kaggle/HiGAN_Contrastive.ipynb`](kaggle/HiGAN_Contrastive.ipynb), set its variables,
 and run all cells. It clones a pinned ref, validates CUDA and the explicit dataset root,
 installs packages without replacing Kaggle's PyTorch, creates manifests, runs tests and a
-one-batch smoke update, trains/resumes, evaluates, and creates `run_bundle.tar.gz`.
+one-batch smoke update, then trains/resumes and evaluates. Outputs remain directly under
+`/kaggle/working/outputs/` without creating an additional tar archive.
 
 ```bash
 pytest -q

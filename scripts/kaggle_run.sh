@@ -15,6 +15,7 @@ EVAL_SEED="123456"
 CONTRASTIVE_START_STEP="28841"
 CONTRASTIVE_RAMP_STEPS="28840"
 MAX_STEPS="0"
+PREVIEW_EVERY_STEPS="500"
 SKIP_HWD="false"
 
 usage() {
@@ -30,6 +31,7 @@ Options:
   --recognizer-checkpoint PATH
   --max-hours HOURS
   --max-steps STEPS                 0 means unlimited
+  --preview-every-steps STEPS       Runtime preview interval; 0 disables previews (default: 500)
   --contrastive-start-step STEP
   --contrastive-ramp-steps STEPS
   --eval-max-samples COUNT          0 means the full test manifest
@@ -59,6 +61,7 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   EVAL_SEED="${13:-123456}"
   DATASET_FORMAT="${14:-iam_raw}"
   MANIFEST_ROOT="${15:-}"
+  PREVIEW_EVERY_STEPS="${16:-500}"
 else
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -70,6 +73,7 @@ else
       --recognizer-checkpoint) RECOGNIZER_CHECKPOINT="${2-}"; shift 2 ;;
       --max-hours) MAX_HOURS="${2-}"; shift 2 ;;
       --max-steps) MAX_STEPS="${2-}"; shift 2 ;;
+      --preview-every-steps) PREVIEW_EVERY_STEPS="${2-}"; shift 2 ;;
       --contrastive-start-step) CONTRASTIVE_START_STEP="${2-}"; shift 2 ;;
       --contrastive-ramp-steps) CONTRASTIVE_RAMP_STEPS="${2-}"; shift 2 ;;
       --eval-max-samples) EVAL_MAX_SAMPLES="${2-}"; shift 2 ;;
@@ -124,6 +128,7 @@ python train.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --dataset-format "$DATASET_FORMAT" --manifest-root "$MANIFEST_ROOT" \
   --output "$OUTPUT" --max-hours "$MAX_HOURS" \
   --max-steps "$MAX_STEPS" \
+  --preview-every-steps "$PREVIEW_EVERY_STEPS" \
   "${resume_args[@]}" \
   --contrastive-start-step "$CONTRASTIVE_START_STEP" \
   --contrastive-ramp-steps "$CONTRASTIVE_RAMP_STEPS"
@@ -144,9 +149,3 @@ python evaluate.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --output "$OUTPUT/evaluation.json" --max-samples "$EVAL_MAX_SAMPLES" \
   --fid-kid-protocol "$FID_KID_PROTOCOL" --eval-seed "$EVAL_SEED" \
   "${recognizer_args[@]}" "${hwd_args[@]}"
-
-bundle_items=(outputs)
-if [[ "$(dirname "$MANIFEST_ROOT")" == "/kaggle/working" ]]; then
-  bundle_items+=("$(basename "$MANIFEST_ROOT")")
-fi
-tar -czf /kaggle/working/run_bundle.tar.gz -C /kaggle/working "${bundle_items[@]}"

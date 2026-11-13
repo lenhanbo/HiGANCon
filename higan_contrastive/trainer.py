@@ -41,7 +41,8 @@ class HiGANTrainer:
                  max_steps: int | None = None,
                  contrastive_start_step: int | None = None,
                  contrastive_ramp_steps: int | None = None,
-                 dataset_format: str = "iam_raw"):
+                 dataset_format: str = "iam_raw",
+                 preview_every_steps: int | None = None):
         self.cfg = cfg
         self.config_path = Path(config_path).resolve()
         self.manifest_root = Path(manifest_root).resolve()
@@ -51,6 +52,11 @@ class HiGANTrainer:
         (self.output / "checkpoints").mkdir(exist_ok=True)
         self.max_hours = max_hours
         self.max_steps = int(max_steps) if max_steps is not None and int(max_steps) > 0 else None
+        self.preview_every_steps = int(
+            cfg.training.preview_every_steps
+            if preview_every_steps is None else preview_every_steps)
+        if self.preview_every_steps < 0:
+            raise ValueError("preview_every_steps must be >= 0")
         self.contrastive_start_step = int(
             contrastive_start_step if contrastive_start_step is not None
             else cfg.contrastive.start_step)
@@ -433,7 +439,7 @@ class HiGANTrainer:
                     print(json.dumps(log_record, sort_keys=True), flush=True)
                 if self.global_step % int(self.cfg.training.save_every_steps) == 0:
                     self.save_checkpoint(f"step_{self.global_step:08d}.pt")
-                preview_every = int(self.cfg.training.preview_every_steps)
+                preview_every = self.preview_every_steps
                 if preview_every > 0 and self.global_step % preview_every == 0:
                     preview_path = self.save_training_preview(batch)
                     print(f"Saved preview: {preview_path}", flush=True)
