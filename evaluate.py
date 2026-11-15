@@ -35,17 +35,55 @@ def edit_distance(left: str, right: str) -> int:
     return row[-1]
 
 
-def ctc_decode(logits: torch.Tensor) -> list[str]:
+def ctc_decode(logits: torch.Tensor, lengths: torch.Tensor | None = None) -> list[str]:
+    """Greedy CTC decoding restricted to each sample's valid timesteps."""
     alphabet = Alphabets["all"]
     output = []
-    for sequence in logits.argmax(dim=-1).cpu().tolist():
+    sequences = logits.argmax(dim=-1).cpu()
+    if lengths is None:
+        lengths = torch.full((len(sequences),), sequences.shape[1], dtype=torch.long)
+    lengths = lengths.detach().cpu().long()
+    if len(lengths) != len(sequences):
+        raise ValueError("CTC decode lengths do not match the logits batch")
+    for sequence, length in zip(sequences.tolist(), lengths.tolist()):
         chars, previous = [], None
-        for index in sequence:
+        for index in sequence[:max(0, int(length))]:
             if index != 0 and index != previous and index < len(alphabet):
                 chars.append(alphabet[index])
             previous = index
         output.append("".join(chars))
     return output
+
+
+def select_query_texts(originals: list[str], pool: list[str], rng: random.Random,
+                       require_different: bool = True) -> list[str]:
+    """Select deterministic query texts, optionally excluding each original text."""
+    if not pool:
+        raise ValueError("Query text pool is empty")
+    result = []
+    for original in originals:
+        query = rng.choice(pool)
+        if require_different and query == original:
+            if len(pool) == 1:
+                raise ValueError("Query pool has no text different from the reference")
+            while query == original:
+                query = rng.choice(pool)
+        result.append(query)
+    return result
+
+
+def update_error_totals(totals: dict[str, int], truths: list[str],
+                        predictions: list[str]) -> None:
+    for truth, prediction in zip(truths, predictions):
+        totals["char_errors"] += edit_distance(truth, prediction)
+        totals["char_total"] += len(truth)
+        totals["word_errors"] += edit_distance(truth.split(), prediction.split())
+        totals["word_total"] += len(truth.split())
+
+
+def error_rates(totals: dict[str, int]) -> tuple[float, float]:
+    return (totals["char_errors"] / max(1, totals["char_total"]),
+            totals["word_errors"] / max(1, totals["word_total"]))
 
 
 def torchvision_inception_features(model, images: list[torch.Tensor],
@@ -254,6 +292,27 @@ def evaluate(args) -> dict:
         raise ValueError("Checkpoint dataset format does not match evaluation dataset")
     dataset = load_experiment_dataset(
         args.dataset_format, args.dataset_root, args.manifest_root, "test")
+    train_dataset = load_experiment_dataset(
+        args.dataset_format, args.dataset_root, args.manifest_root, "train")
+    alphabet_set = set(Alphabets["all"])
+    max_word_len = int(cfg.training.max_word_len)
+    in_vocab_queries = sorted({
+        str(record["text"]) for record in train_dataset.records
+        if 0 < len(str(record["text"])) < max_word_len
+        and set(str(record["text"])).issubset(alphabet_set)
+    })
+    training_vocab_lower = {text.lower() for text in in_vocab_queries}
+    open_lexicon = get_lexicon(
+        cfg.training.lexicon, Alphabets["all"], max_length=max_word_len)
+    oov_queries = sorted({word for word in open_lexicon
+                          if word.lower() not in training_vocab_lower})
+    if hasattr(train_dataset, "close"):
+        train_dataset.close()
+    del train_dataset
+    if not in_vocab_queries:
+        raise ValueError("Training vocabulary is empty; cannot run different-text CER/WER")
+    print(f"[eval] query pools: in_vocab={len(in_vocab_queries)} oov={len(oov_queries)}",
+          flush=True)
     sample_limit = len(dataset) if args.max_samples <= 0 else min(len(dataset), args.max_samples)
     print(f"[eval] test samples={len(dataset)} evaluating={sample_limit}", flush=True)
     cfg.WidModel.n_writer = checkpoint["models"]["W"]["linear_wid.2.weight"].shape[0]
@@ -268,6 +327,9 @@ def evaluate(args) -> dict:
     if independent:
         recognizer_state = torch.load(args.recognizer_checkpoint, map_location=device, weights_only=False)
         R.load_state_dict(recognizer_state.get("R", recognizer_state.get("Recognizer", recognizer_state)))
+    else:
+        print("[eval] WARNING: no independent recognizer checkpoint; CER/WER are diagnostic only",
+              flush=True)
 
     loader = DataLoader(dataset, batch_size=int(cfg.training.batch_size), shuffle=False,
                         drop_last=False, collate_fn=collate_words, num_workers=0)
@@ -285,7 +347,11 @@ def evaluate(args) -> dict:
             cfg.training.lexicon, Alphabets["all"], max_length=int(cfg.training.max_word_len))
         if not preview_lexicon:
             raise ValueError("Preview random-query lexicon is empty")
-    char_errors = word_errors = char_total = word_total = 0
+    error_names = ("real", "same_text", "different_text", "oov_text")
+    errors = {name: {"char_errors": 0, "char_total": 0,
+                     "word_errors": 0, "word_total": 0}
+              for name in error_names}
+    protocol_rng = random.Random(int(args.eval_seed) + 2_000_003)
     diversities = []
     eval_generator = torch.Generator(device=device)
     eval_generator.manual_seed(int(args.eval_seed))
@@ -309,6 +375,22 @@ def evaluate(args) -> dict:
         generated = G(torch.cat((noise1, mu), 1), labels, label_lens)
         generated2 = G(torch.cat((noise2, mu), 1), labels, label_lens)
         generated_lens = label_lens * int(cfg.char_width)
+        different_queries = select_query_texts(
+            list(batch["texts"]), in_vocab_queries, protocol_rng, require_different=True)
+        different_labels, different_label_lens = encode_query_texts(different_queries, device)
+        different_generated = G(
+            torch.cat((noise1, mu), 1), different_labels, different_label_lens)
+        different_generated_lens = different_label_lens * int(cfg.char_width)
+        if oov_queries:
+            oov_texts = select_query_texts(
+                list(batch["texts"]), oov_queries, protocol_rng, require_different=True)
+            oov_labels, oov_label_lens = encode_query_texts(oov_texts, device)
+            oov_generated = G(torch.cat((noise1, mu), 1), oov_labels, oov_label_lens)
+            oov_generated_lens = oov_label_lens * int(cfg.char_width)
+        else:
+            oov_texts = []
+            oov_generated = None
+            oov_generated_lens = None
         if args.preview_samples < 0:
             preview_count = len(real)
         else:
@@ -336,12 +418,16 @@ def evaluate(args) -> dict:
         embeddings.append(E(generated, generated_lens, W.cnn_backbone).cpu())
         writer_labels.append(batch["writers"])
         diversities.append((generated - generated2).abs().mean().item())
-        predictions = ctc_decode(R(generated))
-        for truth, prediction in zip(batch["texts"], predictions):
-            char_errors += edit_distance(truth, prediction)
-            char_total += len(truth)
-            word_errors += edit_distance(truth.split(), prediction.split())
-            word_total += len(truth.split())
+        real_predictions = ctc_decode(R(real), lengths // R.len_scale)
+        same_predictions = ctc_decode(R(generated), generated_lens // R.len_scale)
+        different_predictions = ctc_decode(
+            R(different_generated), different_generated_lens // R.len_scale)
+        update_error_totals(errors["real"], list(batch["texts"]), real_predictions)
+        update_error_totals(errors["same_text"], list(batch["texts"]), same_predictions)
+        update_error_totals(errors["different_text"], different_queries, different_predictions)
+        if oov_generated is not None and oov_generated_lens is not None:
+            oov_predictions = ctc_decode(R(oov_generated), oov_generated_lens // R.len_scale)
+            update_error_totals(errors["oov_text"], oov_texts, oov_predictions)
         for index in range(len(real)):
             reference_image = real[index, :, :, :int(lengths[index])].cpu()
             real_image = metric_real[index, :, :, :int(metric_real_lens[index])].cpu()
@@ -386,8 +472,25 @@ def evaluate(args) -> dict:
     print(f"[eval] FID/KID complete: fid={fid_value:.6f} kid={kid_value:.6f}", flush=True)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    real_cer, real_wer = error_rates(errors["real"])
+    same_cer, same_wer = error_rates(errors["same_text"])
+    different_cer, different_wer = error_rates(errors["different_text"])
+    if errors["oov_text"]["char_total"]:
+        oov_cer, oov_wer = error_rates(errors["oov_text"])
+    else:
+        oov_cer = oov_wer = None
     metrics = {"fid": fid_value, "kid": kid_value,
-               "cer": char_errors / max(1, char_total), "wer": word_errors / max(1, word_total),
+               # Backward-compatible aliases use the length-aware same-text protocol.
+               "cer": same_cer, "wer": same_wer,
+               "recognizer_real_cer": real_cer, "recognizer_real_wer": real_wer,
+               "same_text_cer": same_cer, "same_text_wer": same_wer,
+               "different_text_cer": different_cer, "different_text_wer": different_wer,
+               "oov_text_cer": oov_cer, "oov_text_wer": oov_wer,
+               "text_evaluation_protocol": "length-aware greedy CTC",
+               "different_text_pool": "IAM training transcripts",
+               "different_text_pool_size": len(in_vocab_queries),
+               "oov_text_pool": "configured open lexicon minus IAM training transcripts",
+               "oov_text_pool_size": len(oov_queries),
                "diversity_l1": float(np.mean(diversities)),
                "independent_recognizer": independent, "samples": len(real_images),
                "eval_seed": int(args.eval_seed), "dataset_format": args.dataset_format,

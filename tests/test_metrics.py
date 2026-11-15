@@ -2,7 +2,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from evaluate import higan_inception_features, kid, retrieval_metrics, trim_batch
+from evaluate import (ctc_decode, higan_inception_features, kid, retrieval_metrics,
+                      select_query_texts, trim_batch)
 from higan_contrastive.metrics import handwriting_distance
 
 
@@ -48,6 +49,24 @@ def test_trim_batch_caps_final_evaluation_batch():
     assert trimmed["images"].shape[0] == 2
     assert trimmed["texts"] == ["a", "b"]
     assert trimmed["unchanged"] == "value"
+
+
+def test_ctc_decode_ignores_padded_timesteps():
+    logits = torch.full((1, 5, 5), -10.0)
+    logits[0, :2, 2] = 10.0  # "A", repeated and collapsed.
+    logits[0, 2:, 3] = 10.0  # Padding would incorrectly append "B".
+    assert ctc_decode(logits) == ["AB"]
+    assert ctc_decode(logits, torch.tensor([2])) == ["A"]
+
+
+def test_query_selection_excludes_reference_and_is_deterministic():
+    import random
+    originals = ["one", "two"]
+    pool = ["one", "two", "three"]
+    first = select_query_texts(originals, pool, random.Random(7))
+    second = select_query_texts(originals, pool, random.Random(7))
+    assert first == second
+    assert all(query != original for query, original in zip(first, originals))
 
 
 def test_higan_fid_preprocessing_pads_to_original_width_and_range():

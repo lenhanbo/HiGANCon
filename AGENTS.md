@@ -57,3 +57,15 @@ run metadata/checkpoints and reject resume when it does not match.
   test, long train plus exactly one eval, and a final results/preview cell. Modify this
   workflow in place instead of replacing it with a generic template.
 - After behavior changes, run compile checks and the complete pytest suite.
+
+## Text-recognition evaluation
+
+- CTC greedy decoding must always be truncated to each sample's valid recognizer length;
+  never decode padded timesteps.
+- Report recognizer calibration on real test images plus generated-image CER/WER for
+  same-text, different in-vocabulary text, and OOV text separately.
+- Different-text queries come from train transcripts and must differ from the reference.
+  OOV queries come from the open lexicon after excluding train transcripts.
+- CER/WER are reportable only with one frozen recognizer trained independently on real
+  data and reused across every compared generator. Without it, clearly label metrics as
+  diagnostic rather than silently treating the jointly trained `R` as independent.

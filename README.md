@@ -205,8 +205,12 @@ python evaluate.py \
   --output /kaggle/working/outputs/contrastive/evaluation.json
 ```
 
-The report contains FID, KID, HWD, CER, WER, writer retrieval Top-1/Top-5,
-positive/negative cosine, separation gap, and noise diversity. HWD follows the official
+The report contains FID, KID, HWD, writer retrieval Top-1/Top-5, positive/negative
+cosine, separation gap, noise diversity, and length-aware CER/WER for four views:
+recognizer calibration on real test images, same-text generation, different in-vocabulary
+text generation, and OOV-text generation. The legacy `cer`/`wer` keys alias the
+same-text values. Different-text queries come from IAM training transcripts; OOV queries
+come from the configured open lexicon after removing training transcripts. HWD follows the official
 BMVC 2023 protocol: Font²-pretrained VGG-16 features at height 32, writer-wise feature
 means, Euclidean distance, then an average over writers. Lower FID, KID, and HWD are
 better. The official HWD backbone downloads once and is cached by PyTorch; pass
@@ -219,6 +223,10 @@ official GitHub release. Set `SKIP_HWD=true` (or pass `--skip-hwd` directly to
 independent CER/WER reporting,
 supply an IAM recognizer trained outside both experiments; otherwise the report marks
 `independent_recognizer: false`.
+When this value is false, CER/WER are diagnostic only. For reportable text metrics,
+provide one recognizer checkpoint trained only on real data and use that same frozen
+checkpoint for every generator being compared. The report includes
+`recognizer_real_cer` and `recognizer_real_wer` so its baseline quality is visible.
 
 `--fid-kid-protocol higan` is the Kaggle default and reproduces the upstream HiGAN
 metric settings: images are padded to at least `char_width * max_word_len = 320`,
