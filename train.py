@@ -31,6 +31,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-supcon", action="store_true", help="Alias for --no supcon")
     parser.add_argument("--no-ctc-guided", action="store_true",
                         help="Alias for --no ctc-guided")
+    supcon_text = parser.add_mutually_exclusive_group()
+    supcon_text.add_argument("--supcon-shared-text", dest="supcon_text_mode",
+                             action="store_const", const="shared",
+                             help="Use one shared query text for every SupCon view")
+    supcon_text.add_argument("--supcon-per-item-text", dest="supcon_text_mode",
+                             action="store_const", const="per_item",
+                             help="Use each item's own query text for its SupCon view")
     parser.add_argument("--no-eval", action="store_true",
                         help="Do not automatically evaluate after training finishes")
     parser.add_argument("--eval-max-samples", type=int, default=None,
@@ -96,6 +103,8 @@ def main() -> None:
     args = parser.parse_args()
     cfg = yaml2config(args.config)
     evaluation_cfg = cfg.evaluation
+    if args.supcon_text_mode is None:
+        args.supcon_text_mode = str(cfg.contrastive.text_mode)
     if args.eval_max_samples is None:
         args.eval_max_samples = int(evaluation_cfg.max_samples)
     if args.eval_fid_kid_protocol is None:
@@ -121,7 +130,8 @@ def main() -> None:
             cfg, args.config, args.dataset_root, args.manifest_root, args.output,
             args.resume, args.max_hours, args.max_steps, dataset_format=args.dataset_format,
             enable_supcon="supcon" not in disabled,
-            enable_ctc_guided="ctc-guided" not in disabled)
+            enable_ctc_guided="ctc-guided" not in disabled,
+            supcon_text_mode=args.supcon_text_mode)
     else:
         if "ctc-guided" in disabled:
             parser.error("--no ctc-guided requires a config containing ctc_match")
@@ -129,7 +139,8 @@ def main() -> None:
             cfg, args.config, args.dataset_root, args.manifest_root, args.output,
             args.resume, args.max_hours, args.max_steps, args.contrastive_start_step,
             args.contrastive_ramp_steps, args.dataset_format, args.preview_every_steps,
-            enable_supcon="supcon" not in disabled)
+            enable_supcon="supcon" not in disabled,
+            supcon_text_mode=args.supcon_text_mode)
     trainer.train(smoke_test=args.smoke_test)
     if args.smoke_test:
         print("[train] smoke test complete; automatic evaluation skipped", flush=True)

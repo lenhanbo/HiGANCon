@@ -85,6 +85,7 @@ class CTCSoftTrainer(HiGANTrainer):
                 "target_weight": float(self.cfg.contrastive.lambda_con),
                 "start_step": self.contrastive_start_step,
                 "ramp_steps": self.contrastive_ramp_steps,
+                "text_mode": self.supcon_text_mode,
                 "effective_weight": self._supcon_weight(step),
             },
             "ctc_match": {
@@ -272,13 +273,19 @@ class CTCSoftTrainer(HiGANTrainer):
             supcon_images = supcon_lens = None
             supcon_text = None
             if self.enable_supcon:
-                shared_labels = labels[:1].expand(len(images), -1).contiguous()
-                shared_lens = label_lens[:1].expand(len(images)).contiguous()
                 shared_noise = torch.randn(1, self.noise_dim, device=self.device,
                                            generator=generator).expand(len(images), -1)
+                if self.supcon_text_mode == "shared":
+                    supcon_labels = labels[:1].expand(len(images), -1).contiguous()
+                    supcon_label_lens = label_lens[:1].expand(len(images)).contiguous()
+                    supcon_text = batch["texts"][0]
+                else:
+                    supcon_labels, supcon_label_lens = labels, label_lens
+                    supcon_text = list(batch["texts"])
                 supcon_images = self.models["G"](
-                    torch.cat((shared_noise, reference_mu), dim=1), shared_labels, shared_lens)
-                supcon_lens, supcon_text = shared_lens * self.char_width, batch["texts"][0]
+                    torch.cat((shared_noise, reference_mu), dim=1),
+                    supcon_labels, supcon_label_lens)
+                supcon_lens = supcon_label_lens * self.char_width
             metadata = {"global_step": self.global_step,
                         **self._auxiliary_state(max(1, self.global_step)), "items": []}
             real_alignment = fake_alignment = None

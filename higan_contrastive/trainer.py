@@ -43,7 +43,8 @@ class HiGANTrainer:
                  contrastive_ramp_steps: int | None = None,
                  dataset_format: str = "iam_raw",
                  preview_every_steps: int | None = None,
-                 enable_supcon: bool = True):
+                 enable_supcon: bool = True,
+                 supcon_text_mode: str = "per_item"):
         self.cfg = cfg
         self.config_path = Path(config_path).resolve()
         self.manifest_root = Path(manifest_root).resolve()
@@ -51,6 +52,9 @@ class HiGANTrainer:
         self.output.mkdir(parents=True, exist_ok=True)
         self.dataset_format = dataset_format
         self.enable_supcon = bool(enable_supcon)
+        if supcon_text_mode not in {"shared", "per_item"}:
+            raise ValueError("supcon_text_mode must be 'shared' or 'per_item'")
+        self.supcon_text_mode = supcon_text_mode
         (self.output / "checkpoints").mkdir(exist_ok=True)
         self.max_hours = max_hours
         self.max_steps = int(max_steps) if max_steps is not None and int(max_steps) > 0 else None
@@ -201,12 +205,16 @@ class HiGANTrainer:
 
     def _supcon_branch(self, images, image_lens, writers, labels, label_lens) -> torch.Tensor:
         ref_mu = self._encode_style(images, image_lens, vae=False)
-        shared_labels = labels[:1].expand(images.shape[0], -1).contiguous()
-        shared_label_lens = label_lens[:1].expand(images.shape[0]).contiguous()
+        if self.supcon_text_mode == "shared":
+            supcon_labels = labels[:1].expand(images.shape[0], -1).contiguous()
+            supcon_label_lens = label_lens[:1].expand(images.shape[0]).contiguous()
+        else:
+            supcon_labels, supcon_label_lens = labels, label_lens
         shared_noise = torch.randn(1, self.noise_dim, device=self.device).expand(images.shape[0], -1)
         generated = self.models["G"](torch.cat((shared_noise, ref_mu), dim=1),
-                                     shared_labels, shared_label_lens)
-        generated_mu = self._encode_style(generated, shared_label_lens * self.char_width, vae=False)
+                                     supcon_labels, supcon_label_lens)
+        generated_mu = self._encode_style(
+            generated, supcon_label_lens * self.char_width, vae=False)
         return supervised_contrastive_loss(generated_mu, writers, float(self.cfg.contrastive.temperature))
 
     def _g_step(self, batch: dict) -> dict[str, float]:
@@ -310,15 +318,19 @@ class HiGANTrainer:
             contrastive_lengths = None
             contrastive_text = None
             if self.enable_supcon and float(self.cfg.contrastive.lambda_con) > 0:
-                shared_labels = labels[:1].expand(len(images), -1).contiguous()
-                shared_label_lens = label_lens[:1].expand(len(images)).contiguous()
                 shared_noise = torch.randn(
                     1, self.noise_dim, device=self.device, generator=generator).expand(len(images), -1)
+                if self.supcon_text_mode == "shared":
+                    supcon_labels = labels[:1].expand(len(images), -1).contiguous()
+                    supcon_label_lens = label_lens[:1].expand(len(images)).contiguous()
+                    contrastive_text = batch["texts"][0]
+                else:
+                    supcon_labels, supcon_label_lens = labels, label_lens
+                    contrastive_text = list(batch["texts"])
                 contrastive_images = self.models["G"](
                     torch.cat((shared_noise, reference_mu), dim=1),
-                    shared_labels, shared_label_lens)
-                contrastive_lengths = shared_label_lens * self.char_width
-                contrastive_text = batch["texts"][0]
+                    supcon_labels, supcon_label_lens)
+                contrastive_lengths = supcon_label_lens * self.char_width
             metadata = {
                 "global_step": self.global_step,
                 "random_synthetic_style": {
@@ -337,8 +349,9 @@ class HiGANTrainer:
                     "lambda_con": con_weight,
                     "start_step": self.contrastive_start_step,
                     "ramp_steps": self.contrastive_ramp_steps,
-                    "definition": "E_mu(real) with one shared auxiliary noise and one shared text for every row; adjacent rows are same-writer pairs.",
-                    "shared_text": contrastive_text,
+                    "text_mode": self.supcon_text_mode,
+                    "definition": "E_mu(real) with one shared auxiliary noise and configurable shared/per-item text; adjacent rows are same-writer pairs.",
+                    "texts": contrastive_text,
                 },
             }
             return save_preview(
@@ -369,6 +382,7 @@ class HiGANTrainer:
             "contrastive_schedule": {
                 "start_step": self.contrastive_start_step,
                 "ramp_steps": self.contrastive_ramp_steps,
+                "text_mode": self.supcon_text_mode,
             },
         }
 
@@ -391,7 +405,8 @@ class HiGANTrainer:
         if checkpoint["initial_state_hash"] != self.initial_state_hash:
             raise ValueError("Checkpoint was created from a different initialization")
         expected_schedule = {"start_step": self.contrastive_start_step,
-                             "ramp_steps": self.contrastive_ramp_steps}
+                             "ramp_steps": self.contrastive_ramp_steps,
+                             "text_mode": self.supcon_text_mode}
         if checkpoint.get("contrastive_schedule") != expected_schedule:
             raise ValueError("Checkpoint contrastive step schedule does not match this run")
         for name, state in checkpoint["models"].items(): self.models[name].load_state_dict(state)

@@ -15,7 +15,7 @@ classification, KL regularization, and HiGAN's adaptive gradient balancing.
 The contrastive run adds only:
 
 ```text
-lambda_con * SupCon(L2Norm(E_mu(G([shared_noise, E_mu(reference)], shared_text))))
+lambda_con * SupCon(L2Norm(E_mu(G([shared_noise, E_mu(reference)], configurable_text))))
 ```
 
 Each batch has 8 unique writers and 2 distinct reference words per writer. Positive
@@ -138,7 +138,7 @@ the ceiling continues training while lowering it below the saved step exits imme
 
 Kaggle runs save a deterministic visual panel every 500 steps under `previews/` (the
 YAML default remains 200 for checkpoint compatibility). It shows
-`REAL REFERENCE | RANDOM SYNTHETIC STYLE | REFERENCE-GUIDED | SUPCON SHARED TEXT/NOISE`.
+`REAL REFERENCE | RANDOM SYNTHETIC STYLE | REFERENCE-GUIDED | SUPCON PER-ITEM TEXT/SHARED NOISE`.
 The random column uses one `z ~ N(0,I)` shared by every row, so multiple texts reveal one
 synthetic style; it has no real writer identity. The adjacent JSON records its seed and
 all 128 latent values. SupCon rows preserve sampler order, so each adjacent pair belongs
@@ -146,6 +146,11 @@ to one writer and uses the same text/noise. Preview generation uses a local RNG 
 mode, so it does not advance training RNG or BatchNorm statistics. Change
 Pass `--preview-every-steps N` to `train.py` or `scripts/kaggle_run.sh` to change the
 runtime interval without changing the config hash; `0` disables training previews.
+
+SupCon text mode defaults to `contrastive.text_mode: per_item`, so every item keeps its
+own query text. Use `--supcon-shared-text` to run the original shared-text variant, or
+`--supcon-per-item-text` to explicitly select per-item text. These two flags are
+mutually exclusive and override the YAML value for that run.
 
 Console loss records are averages over `print_every_steps` training batches. This is
 important because D-side runs every batch while G/E-side runs every four batches; the

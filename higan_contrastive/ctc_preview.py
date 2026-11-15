@@ -56,7 +56,8 @@ def save_ctc_preview(style_reference: torch.Tensor, style_lengths: torch.Tensor,
                      writer_ids: Sequence[str] | None = None,
                      supcon_images: torch.Tensor | None = None,
                      supcon_lengths: torch.Tensor | None = None,
-                     supcon_text: str | None = None, metadata: dict | None = None) -> Path:
+                     supcon_text: str | Sequence[str] | None = None,
+                     metadata: dict | None = None) -> Path:
     """Save the complete style/query/target preview grid for soft matching."""
     count = min(max_items, len(real_target), len(query_texts))
     if count <= 0:
@@ -69,7 +70,8 @@ def save_ctc_preview(style_reference: torch.Tensor, style_lengths: torch.Tensor,
             raise ValueError("supcon_lengths is required with supcon_images")
         tensors.append(supcon_images)
         lengths.append(supcon_lengths)
-        titles.append("SUPCON SHARED QUERY")
+        titles.append("SUPCON SHARED QUERY" if isinstance(supcon_text, str)
+                      else "SUPCON PER-ITEM QUERY")
     groups = [[_display_image(tensor[i], int(size[i])) for i in range(count)]
               for tensor, size in zip(tensors, lengths)]
     widths = [max(max(tile.width for tile in group), len(title) * 7)
@@ -88,8 +90,14 @@ def save_ctc_preview(style_reference: torch.Tensor, style_lengths: torch.Tensor,
         for column, group in enumerate(groups):
             canvas.paste(group[row], (positions[column], y))
         writer = writer_ids[row] if writer_ids is not None else "?"
+        if isinstance(supcon_text, str):
+            item_supcon_text = supcon_text
+        elif supcon_text is not None:
+            item_supcon_text = supcon_text[row]
+        else:
+            item_supcon_text = None
         label = (f"writer={writer} | ref={reference_texts[row]} | query={query_texts[row]}"
-                 + (f" | supcon={supcon_text}" if supcon_text is not None else ""))
+                 + (f" | supcon={item_supcon_text}" if item_supcon_text is not None else ""))
         draw.text((margin, y + image_height + 1), label[:180], fill=0)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,17 @@ def test_default_and_all_loss_opt_out_spellings():
     assert aliases.no_supcon and aliases.no_ctc_guided
 
 
+def test_two_supcon_text_mode_flags_are_mutually_exclusive():
+    parser = build_parser()
+    shared = parser.parse_args(_required_args() + ["--supcon-shared-text"])
+    per_item = parser.parse_args(_required_args() + ["--supcon-per-item-text"])
+    assert shared.supcon_text_mode == "shared"
+    assert per_item.supcon_text_mode == "per_item"
+    with pytest.raises(SystemExit):
+        parser.parse_args(_required_args()
+                          + ["--supcon-shared-text", "--supcon-per-item-text"])
+
+
 @pytest.mark.parametrize("option", ("--contrastive-start-step", "--contrastive-ramp-steps",
                                     "--preview-every-steps"))
 def test_ctc_config_rejects_schedule_overrides(option):

@@ -24,7 +24,7 @@ def save_preview(real: torch.Tensor, real_lengths: torch.Tensor,
                  random_title: str = "RANDOM SYNTHETIC STYLE",
                  contrastive_style: torch.Tensor | None = None,
                  contrastive_lengths: torch.Tensor | None = None,
-                 contrastive_text: str | None = None,
+                 contrastive_text: str | Sequence[str] | None = None,
                  metadata: dict | None = None) -> Path:
     count = min(max_items, len(real), len(texts))
     if count <= 0:
@@ -39,7 +39,8 @@ def save_preview(real: torch.Tensor, real_lengths: torch.Tensor,
             raise ValueError("contrastive_lengths is required with contrastive_style")
         groups.append([_display_image(contrastive_style[i], int(contrastive_lengths[i]))
                        for i in range(count)])
-        titles.append("SUPCON SHARED TEXT/NOISE")
+        titles.append("SUPCON SHARED TEXT/NOISE" if isinstance(contrastive_text, str)
+                      else "SUPCON PER-ITEM TEXT/SHARED NOISE")
     column_widths = [max(max(image.width for image in group), len(title) * 7)
                      for group, title in zip(groups, titles)]
     margin, gap, header_height, label_height = 8, 8, 22, 18
@@ -60,7 +61,13 @@ def save_preview(real: torch.Tensor, real_lengths: torch.Tensor,
         for column, group in enumerate(groups):
             canvas.paste(group[row], (x_positions[column], y))
         writer = f"writer={writer_ids[row]} | " if writer_ids is not None else ""
-        shared = f" | supcon_text={contrastive_text}" if contrastive_text is not None else ""
+        if isinstance(contrastive_text, str):
+            supcon_text = contrastive_text
+        elif contrastive_text is not None:
+            supcon_text = contrastive_text[row]
+        else:
+            supcon_text = None
+        shared = f" | supcon_text={supcon_text}" if supcon_text is not None else ""
         label = (writer + "text=" + str(texts[row]).replace("\n", " ") + shared)[:140]
         draw.text((margin, y + 34), label, fill=0)
     path = Path(path)
