@@ -116,7 +116,11 @@ if [[ "$FID_KID_PROTOCOL" != "higan" && "$FID_KID_PROTOCOL" != "torchvision" ]];
   exit 2
 fi
 CONFIG="configs/config.yaml"
-OUTPUT="/kaggle/working/outputs/${RUN_MODE}"
+OUTPUT_NAME="$RUN_MODE"
+if [[ "$RUN_MODE" == "supcon" || "$RUN_MODE" == "contrastive" || "$RUN_MODE" == "full" ]]; then
+  OUTPUT_NAME="${RUN_MODE}-${SUPCON_TEXT_MODE}"
+fi
+OUTPUT="/kaggle/working/outputs/${OUTPUT_NAME}"
 
 loss_args=()
 case "$RUN_MODE" in

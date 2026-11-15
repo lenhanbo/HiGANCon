@@ -278,7 +278,7 @@ already attached/downloaded HDF5 files instead.
 
 ## Kaggle and tests
 
-Open [`kaggle/HiGAN_Contrastive.ipynb`](kaggle/HiGAN_Contrastive.ipynb), set its variables,
+Open [`kaggle/higancon.ipynb`](kaggle/higancon.ipynb), set its variables,
 and run all cells. It clones a pinned ref, validates CUDA and the explicit dataset root,
 installs packages without replacing Kaggle's PyTorch, creates manifests, runs tests and a
 one-batch smoke update, then trains/resumes and evaluates. Outputs remain directly under

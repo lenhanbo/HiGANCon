@@ -47,7 +47,13 @@ run metadata/checkpoints and reject resume when it does not match.
   and SupCon text flag through to `train.py`.
 - The script passes `--no-eval` to `train.py` only because it invokes `evaluate.py`
   itself with Kaggle-specific metric options; it must still evaluate exactly once.
+- The canonical Kaggle notebook is `kaggle/higancon.ipynb`. Do not recreate or use the
+  deleted `kaggle/HiGAN_Contrastive.ipynb` unless the user explicitly asks.
 - The Kaggle notebook exposes `RUN_MODE` (`baseline`, `supcon`, `contrastive`, `ctc`, or
   `full`) and `SUPCON_TEXT_MODE` (`shared` or `per_item`). Keep notebook, shell script,
   README, and CLI names synchronized.
+- Preserve the current notebook style in later edits: one user-editable configuration
+  cell, GitHub clone/pull, Hugging Face HDF5 download, dataset setup, mode-aware smoke
+  test, long train plus exactly one eval, and a final results/preview cell. Modify this
+  workflow in place instead of replacing it with a generic template.
 - After behavior changes, run compile checks and the complete pytest suite.

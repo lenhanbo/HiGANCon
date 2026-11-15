@@ -26,15 +26,15 @@ training:
 
 contrastive:
   lambda_con: 0.1
-  start_step: 28841
-  ramp_steps: 28840
+  start_step: 10001
+  ramp_steps: 5000
   temperature: 0.07
   text_mode: per_item
 
 ctc_match:
   lambda_match: 0.1
-  start_step: 28841
-  ramp_steps: 28840
+  start_step: 10001
+  ramp_steps: 5000
   patch_width: 3
   eps: 1.0e-8
   preview_heatmaps: true
