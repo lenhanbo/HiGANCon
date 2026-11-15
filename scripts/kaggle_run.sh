@@ -128,6 +128,7 @@ python train.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --dataset-format "$DATASET_FORMAT" --manifest-root "$MANIFEST_ROOT" \
   --output "$OUTPUT" --max-hours "$MAX_HOURS" \
   --max-steps "$MAX_STEPS" \
+  --no-eval \
   --preview-every-steps "$PREVIEW_EVERY_STEPS" \
   "${resume_args[@]}" \
   --contrastive-start-step "$CONTRASTIVE_START_STEP" \

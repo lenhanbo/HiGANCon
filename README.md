@@ -175,6 +175,12 @@ SupCon and CTC-guided matching are enabled by default. Disable either with
 schedules or preview cadence. Its previews include the paired target and generated
 word, optional SupCon view, CTC heatmaps, and per-sample alignment JSON.
 
+After every completed training run, `train.py` automatically evaluates
+`checkpoints/last.pt` on the test split and writes `evaluation.json` under the run
+output directory. This also happens after `--max-steps` or `--max-hours`; smoke tests
+skip it. Use `--no-eval` to opt out, `--eval-max-samples N` for a limited evaluation,
+or `--eval-skip-hwd` when the HWD backbone is unavailable.
+
 ## Evaluation
 
 ```bash
