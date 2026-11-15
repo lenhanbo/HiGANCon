@@ -42,13 +42,15 @@ class HiGANTrainer:
                  contrastive_start_step: int | None = None,
                  contrastive_ramp_steps: int | None = None,
                  dataset_format: str = "iam_raw",
-                 preview_every_steps: int | None = None):
+                 preview_every_steps: int | None = None,
+                 enable_supcon: bool = True):
         self.cfg = cfg
         self.config_path = Path(config_path).resolve()
         self.manifest_root = Path(manifest_root).resolve()
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
         self.dataset_format = dataset_format
+        self.enable_supcon = bool(enable_supcon)
         (self.output / "checkpoints").mkdir(exist_ok=True)
         self.max_hours = max_hours
         self.max_steps = int(max_steps) if max_steps is not None and int(max_steps) > 0 else None
@@ -219,7 +221,7 @@ class HiGANTrainer:
         fake_image_lens = fake_label_lens * self.char_width
         con_weight = contrastive_weight_at_step(
             self.global_step + 1, float(self.cfg.contrastive.lambda_con),
-            self.contrastive_start_step, self.contrastive_ramp_steps)
+            self.contrastive_start_step, self.contrastive_ramp_steps) if self.enable_supcon else 0.0
         with self._autocast():
             random_z, random_images, reference_images, mu, logvar = self._sample_fakes(
                 images, image_lens, fake_labels, fake_label_lens)
@@ -303,11 +305,11 @@ class HiGANTrainer:
                 torch.cat((noise, reference_mu), dim=1), labels, label_lens)
             con_weight = contrastive_weight_at_step(
                 max(1, self.global_step), float(self.cfg.contrastive.lambda_con),
-                self.contrastive_start_step, self.contrastive_ramp_steps)
+                self.contrastive_start_step, self.contrastive_ramp_steps) if self.enable_supcon else 0.0
             contrastive_images = None
             contrastive_lengths = None
             contrastive_text = None
-            if float(self.cfg.contrastive.lambda_con) > 0:
+            if self.enable_supcon and float(self.cfg.contrastive.lambda_con) > 0:
                 shared_labels = labels[:1].expand(len(images), -1).contiguous()
                 shared_label_lens = label_lens[:1].expand(len(images)).contiguous()
                 shared_noise = torch.randn(

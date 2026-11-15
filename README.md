@@ -157,6 +157,24 @@ before `CONTRASTIVE_START_STEP`; the weight then rises per training step over
 If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 in
 **both** configs before starting either experiment. This gives 4 writers × 2 references.
 
+### CTC-guided soft matching
+
+The CTC-soft configuration keeps every auxiliary schedule in `configs/ctc_soft.yaml`:
+
+```bash
+python train.py \
+  --config configs/ctc_soft.yaml \
+  --dataset-root "$DATASET_ROOT" \
+  --manifest-root data/manifests \
+  --output outputs/ctc-soft
+```
+
+SupCon and CTC-guided matching are enabled by default. Disable either with
+`--no supcon` / `--no ctc-guided` (or `--no-supcon` / `--no-ctc-guided`), and repeat
+`--no` to disable both. In CTC-soft mode, `train.py` intentionally has no CLI overrides for loss
+schedules or preview cadence. Its previews include the paired target and generated
+word, optional SupCon view, CTC heatmaps, and per-sample alignment JSON.
+
 ## Evaluation
 
 ```bash

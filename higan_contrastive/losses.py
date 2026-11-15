@@ -41,6 +41,12 @@ def contrastive_weight_at_step(step_one_based: int, target: float, start_step: i
     return float(target) * progress
 
 
+def scheduled_weight_at_step(step_one_based: int, target: float, start_step: int,
+                             ramp_steps: int) -> float:
+    """Generic alias used by auxiliary objectives with the same step schedule."""
+    return contrastive_weight_at_step(step_one_based, target, start_step, ramp_steps)
+
+
 def optional_contrastive_loss(weight: float, reference: torch.Tensor,
                               compute: Callable[[], torch.Tensor]) -> torch.Tensor:
     """Avoid constructing any contrastive graph for the exact baseline path."""
