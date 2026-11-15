@@ -5,6 +5,7 @@ DATASET_ROOT=""
 DATASET_FORMAT="iam_raw"
 MANIFEST_ROOT=""
 RUN_MODE="contrastive"
+SUPCON_TEXT_MODE="per_item"
 RESUME_PATH=""
 RECOGNIZER_CHECKPOINT=""
 MAX_HOURS="11.5"
@@ -12,10 +13,7 @@ HWD_CHECKPOINT=""
 EVAL_MAX_SAMPLES="0"
 FID_KID_PROTOCOL="higan"
 EVAL_SEED="123456"
-CONTRASTIVE_START_STEP="28841"
-CONTRASTIVE_RAMP_STEPS="28840"
 MAX_STEPS="0"
-PREVIEW_EVERY_STEPS="500"
 SKIP_HWD="false"
 
 usage() {
@@ -24,16 +22,15 @@ Usage:
   bash scripts/kaggle_run.sh --dataset-root PATH [options]
 
 Options:
-  --run-mode baseline|contrastive
+  --run-mode baseline|supcon|contrastive|ctc|full
+  --supcon-shared-text             Use one shared SupCon query text
+  --supcon-per-item-text           Use a separate query text per SupCon item (default)
   --dataset-format iam_raw|higan_hdf5
   --manifest-root PATH
   --resume PATH
   --recognizer-checkpoint PATH
   --max-hours HOURS
   --max-steps STEPS                 0 means unlimited
-  --preview-every-steps STEPS       Runtime preview interval; 0 disables previews (default: 500)
-  --contrastive-start-step STEP
-  --contrastive-ramp-steps STEPS
   --eval-max-samples COUNT          0 means the full test manifest
   --fid-kid-protocol higan|torchvision
   --eval-seed SEED
@@ -53,29 +50,25 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   MAX_HOURS="${5:-11.5}"
   HWD_CHECKPOINT="${6:-}"
   EVAL_MAX_SAMPLES="${7:-0}"
-  CONTRASTIVE_START_STEP="${8:-28841}"
-  CONTRASTIVE_RAMP_STEPS="${9:-28840}"
   MAX_STEPS="${10:-0}"
   SKIP_HWD="${11:-false}"
   FID_KID_PROTOCOL="${12:-higan}"
   EVAL_SEED="${13:-123456}"
   DATASET_FORMAT="${14:-iam_raw}"
   MANIFEST_ROOT="${15:-}"
-  PREVIEW_EVERY_STEPS="${16:-500}"
 else
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dataset-root) DATASET_ROOT="${2-}"; shift 2 ;;
       --run-mode) RUN_MODE="${2-}"; shift 2 ;;
+      --supcon-shared-text) SUPCON_TEXT_MODE="shared"; shift ;;
+      --supcon-per-item-text) SUPCON_TEXT_MODE="per_item"; shift ;;
       --dataset-format) DATASET_FORMAT="${2-}"; shift 2 ;;
       --manifest-root) MANIFEST_ROOT="${2-}"; shift 2 ;;
       --resume) RESUME_PATH="${2-}"; shift 2 ;;
       --recognizer-checkpoint) RECOGNIZER_CHECKPOINT="${2-}"; shift 2 ;;
       --max-hours) MAX_HOURS="${2-}"; shift 2 ;;
       --max-steps) MAX_STEPS="${2-}"; shift 2 ;;
-      --preview-every-steps) PREVIEW_EVERY_STEPS="${2-}"; shift 2 ;;
-      --contrastive-start-step) CONTRASTIVE_START_STEP="${2-}"; shift 2 ;;
-      --contrastive-ramp-steps) CONTRASTIVE_RAMP_STEPS="${2-}"; shift 2 ;;
       --eval-max-samples) EVAL_MAX_SAMPLES="${2-}"; shift 2 ;;
       --fid-kid-protocol) FID_KID_PROTOCOL="${2-}"; shift 2 ;;
       --eval-seed) EVAL_SEED="${2-}"; shift 2 ;;
@@ -95,13 +88,19 @@ fi
 
 RUN_MODE="${RUN_MODE,,}"
 DATASET_FORMAT="${DATASET_FORMAT,,}"
+SUPCON_TEXT_MODE="${SUPCON_TEXT_MODE,,}"
 
-if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "contrastive" ]]; then
-  printf 'RUN_MODE must be baseline or contrastive; received <%q>\n' "$RUN_MODE" >&2
+if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "supcon" && \
+      "$RUN_MODE" != "contrastive" && "$RUN_MODE" != "ctc" && "$RUN_MODE" != "full" ]]; then
+  printf 'RUN_MODE must be baseline, supcon, contrastive, ctc, or full; received <%q>\n' "$RUN_MODE" >&2
   exit 2
 fi
 if [[ "$DATASET_FORMAT" != "iam_raw" && "$DATASET_FORMAT" != "higan_hdf5" ]]; then
   echo "DATASET_FORMAT must be iam_raw or higan_hdf5" >&2
+  exit 2
+fi
+if [[ "$SUPCON_TEXT_MODE" != "shared" && "$SUPCON_TEXT_MODE" != "per_item" ]]; then
+  printf 'SUPCON_TEXT_MODE must be shared or per_item; received <%q>\n' "$SUPCON_TEXT_MODE" >&2
   exit 2
 fi
 if [[ -z "$MANIFEST_ROOT" ]]; then
@@ -119,9 +118,18 @@ fi
 CONFIG="configs/config.yaml"
 OUTPUT="/kaggle/working/outputs/${RUN_MODE}"
 
-loss_args=(--no ctc-guided)
-if [[ "$RUN_MODE" == "baseline" ]]; then
-  loss_args=(--no supcon --no ctc-guided)
+loss_args=()
+case "$RUN_MODE" in
+  baseline) loss_args=(--no supcon --no ctc-guided) ;;
+  supcon|contrastive) loss_args=(--no ctc-guided) ;;
+  ctc) loss_args=(--no supcon) ;;
+  full) loss_args=() ;;
+esac
+
+if [[ "$SUPCON_TEXT_MODE" == "shared" ]]; then
+  supcon_text_args=(--supcon-shared-text)
+else
+  supcon_text_args=(--supcon-per-item-text)
 fi
 
 resume_args=()
@@ -135,7 +143,8 @@ python train.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --max-steps "$MAX_STEPS" \
   --no-eval \
   "${resume_args[@]}" \
-  "${loss_args[@]}"
+  "${loss_args[@]}" \
+  "${supcon_text_args[@]}"
 
 recognizer_args=()
 if [[ -n "$RECOGNIZER_CHECKPOINT" ]]; then

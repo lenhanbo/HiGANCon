@@ -96,13 +96,17 @@ bash scripts/kaggle_setup.sh "$DATASET_ROOT"
 bash scripts/kaggle_run.sh \
   --dataset-root "$DATASET_ROOT" \
   --run-mode "$RUN_MODE" \
+  --supcon-per-item-text \
   --max-hours "$MAX_HOURS" \
   --max-steps "$MAX_STEPS" \
-  --contrastive-start-step "$CONTRASTIVE_START_STEP" \
-  --contrastive-ramp-steps "$CONTRASTIVE_RAMP_STEPS" \
   --eval-max-samples "$EVAL_MAX_SAMPLES" \
   --skip-hwd
 ```
+
+`RUN_MODE` accepts `baseline`, `supcon` (or legacy `contrastive`), `ctc`, and `full`.
+Choose exactly one SupCon text flag: `--supcon-shared-text` or
+`--supcon-per-item-text`. The Kaggle notebook exposes the same choices as
+`RUN_MODE` and `SUPCON_TEXT_MODE` in its first configuration cell.
 
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
 normalized to `[-1,1]`, then padded with `-1` to a width divisible by 16.
@@ -155,9 +159,10 @@ mutually exclusive and override the YAML value for that run.
 Console loss records are averages over `print_every_steps` training batches. This is
 important because D-side runs every batch while G/E-side runs every four batches; the
 windowed record still includes `g_total`, `supcon`, and `lambda_con`. Per-batch values
-remain in `metrics.jsonl`. For the contrastive config, `lambda_con` and `supcon` are zero
-before `CONTRASTIVE_START_STEP`; the weight then rises per training step over
-`CONTRASTIVE_RAMP_STEPS`. Set ramp to 0 or 1 to switch immediately to the target weight.
+remain in `metrics.jsonl`. `lambda_con` and `supcon` are zero before
+`contrastive.start_step`; the weight then rises per training step over
+`contrastive.ramp_steps`. Set the YAML ramp to 0 or 1 to switch immediately to the
+target weight.
 
 If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 in
 **both** configs before starting either experiment. This gives 4 writers × 2 references.
