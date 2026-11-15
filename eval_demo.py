@@ -9,7 +9,7 @@ if __name__ == '__main__':
         "--config",
         nargs="?",
         type=str,
-        default="configs/gan_iam.yml",
+        default="configs/config.yaml",
         help="Configuration file to use",
     )
 

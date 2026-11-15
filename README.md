@@ -111,16 +111,16 @@ normalized to `[-1,1]`, then padded with `-1` to a width divisible by 16.
 
 ```bash
 python train.py \
-  --config configs/kaggle_contrastive.yaml \
+  --config configs/config.yaml \
   --dataset-root "$DATASET_ROOT" \
   --manifest-root /kaggle/working/data \
   --output /kaggle/working/outputs/contrastive \
   --max-hours 11.5
 ```
 
-Use `configs/kaggle_baseline.yaml` for the paired baseline. Both use seed 123456,
-AMP, Adam 2e-4 with betas (0.5, 0.999), 70 epochs, and HiGAN's linear decay. Their
-`run_metadata.json` files must show the same `initial_state_hash` and `split_hash`.
+`configs/config.yaml` is the single configuration for HiGAN, SupCon, CTC-guided
+matching, schedules, previews, automatic evaluation, and every model. Use loss opt-out flags to select an
+ablation while keeping the same configuration.
 
 Resume with the exact same config and manifests:
 
@@ -159,11 +159,11 @@ If batch 16 is too large, change `writers_per_batch` to 4 and `batch_size` to 8 
 
 ### CTC-guided soft matching
 
-The CTC-soft configuration keeps every auxiliary schedule in `configs/ctc_soft.yaml`:
+The unified configuration keeps every auxiliary schedule in `configs/config.yaml`:
 
 ```bash
 python train.py \
-  --config configs/ctc_soft.yaml \
+  --config configs/config.yaml \
   --dataset-root "$DATASET_ROOT" \
   --manifest-root data/manifests \
   --output outputs/ctc-soft
@@ -185,7 +185,7 @@ or `--eval-skip-hwd` when the HWD backbone is unavailable.
 
 ```bash
 python evaluate.py \
-  --config configs/kaggle_contrastive.yaml \
+  --config configs/config.yaml \
   --dataset-root "$DATASET_ROOT" \
   --manifest-root /kaggle/working/data \
   --checkpoint /kaggle/working/outputs/contrastive/checkpoints/last.pt \

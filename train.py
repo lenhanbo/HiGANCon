@@ -33,16 +33,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Alias for --no ctc-guided")
     parser.add_argument("--no-eval", action="store_true",
                         help="Do not automatically evaluate after training finishes")
-    parser.add_argument("--eval-max-samples", type=int, default=0,
+    parser.add_argument("--eval-max-samples", type=int, default=None,
                         help="Automatic eval sample limit; 0 evaluates the full test split")
     parser.add_argument("--eval-fid-kid-protocol", choices=("higan", "torchvision"),
-                        default="higan")
-    parser.add_argument("--eval-seed", type=int, default=123456)
-    parser.add_argument("--eval-skip-hwd", action="store_true",
+                        default=None)
+    parser.add_argument("--eval-seed", type=int, default=None)
+    parser.add_argument("--eval-skip-hwd", action="store_true", default=None,
                         help="Skip HWD during automatic evaluation")
     parser.add_argument("--eval-hwd-checkpoint", default=None)
     parser.add_argument("--eval-recognizer-checkpoint", default=None)
-    parser.add_argument("--eval-preview-samples", type=int, default=0)
+    parser.add_argument("--eval-preview-samples", type=int, default=None)
     return parser
 
 
@@ -94,11 +94,22 @@ def run_automatic_evaluation(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    cfg = yaml2config(args.config)
+    evaluation_cfg = cfg.evaluation
+    if args.eval_max_samples is None:
+        args.eval_max_samples = int(evaluation_cfg.max_samples)
+    if args.eval_fid_kid_protocol is None:
+        args.eval_fid_kid_protocol = str(evaluation_cfg.fid_kid_protocol)
+    if args.eval_seed is None:
+        args.eval_seed = int(evaluation_cfg.seed)
+    if args.eval_skip_hwd is None:
+        args.eval_skip_hwd = bool(evaluation_cfg.skip_hwd)
+    if args.eval_preview_samples is None:
+        args.eval_preview_samples = int(evaluation_cfg.preview_samples)
     if args.eval_max_samples < 0:
         parser.error("--eval-max-samples must be >= 0")
     if args.eval_preview_samples < -1:
         parser.error("--eval-preview-samples must be -1, 0, or a positive integer")
-    cfg = yaml2config(args.config)
     disabled = set(args.no)
     if args.no_supcon:
         disabled.add("supcon")
@@ -124,6 +135,8 @@ def main() -> None:
         print("[train] smoke test complete; automatic evaluation skipped", flush=True)
     elif args.no_eval:
         print("[train] automatic evaluation disabled by --no-eval", flush=True)
+    elif not bool(evaluation_cfg.enabled):
+        print("[train] automatic evaluation disabled by config", flush=True)
     else:
         del trainer
         gc.collect()

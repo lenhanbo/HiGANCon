@@ -119,7 +119,7 @@ if [[ "$PREVIEW_QUERY_MODE" != "dataset" && "$PREVIEW_QUERY_MODE" != "random" ]]
   exit 2
 fi
 
-CONFIG="configs/kaggle_${RUN_MODE}.yaml"
+CONFIG="configs/config.yaml"
 if [[ -z "$OUTPUT_ROOT" ]]; then
   OUTPUT_ROOT="/kaggle/working/hf_evaluations/${RUN_MODE}"
 fi

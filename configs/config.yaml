@@ -2,6 +2,7 @@ device: cuda:0
 seed: 123456
 img_height: 32
 char_width: 16
+
 training:
   epochs: 70
   lr_policy: linear
@@ -22,11 +23,13 @@ training:
   save_every_steps: 1000
   preview_every_steps: 200
   preview_items: 4
+
 contrastive:
   lambda_con: 0.1
   start_step: 28841
   ramp_steps: 28840
   temperature: 0.07
+
 ctc_match:
   lambda_match: 0.1
   start_step: 28841
@@ -35,6 +38,15 @@ ctc_match:
   eps: 1.0e-8
   preview_heatmaps: true
   preview_json: true
+
+evaluation:
+  enabled: true
+  max_samples: 0
+  fid_kid_protocol: higan
+  seed: 123456
+  skip_hwd: false
+  preview_samples: 0
+
 GenModel:
   G_ch: 64
   style_dim: 128
@@ -61,6 +73,7 @@ GenModel:
   one_hot: true
   first_layer: true
   one_hot_k: 1
+
 DiscModel:
   D_ch: 64
   D_wide: true
@@ -77,14 +90,7 @@ DiscModel:
   bn_linear: SN
   input_nc: 1
   one_hot: true
-WidModel:
-  n_writer: 1
-  resolution: 16
-  max_dim: 256
-  in_channel: 1
-  init: none
-  norm: bn
-  SN_param: false
+
 OcrModel:
   resolution: 16
   max_dim: 256
@@ -95,6 +101,7 @@ OcrModel:
   n_class: 72
   rnn_depth: 0
   bidirectional: false
+
 EncModel:
   style_dim: 96
   resolution: 16
@@ -104,3 +111,12 @@ EncModel:
   norm: bn
   SN_param: false
   share_wid: true
+
+WidModel:
+  n_writer: 1
+  resolution: 16
+  max_dim: 256
+  in_channel: 1
+  init: none
+  norm: bn
+  SN_param: false

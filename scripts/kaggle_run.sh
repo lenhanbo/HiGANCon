@@ -116,8 +116,13 @@ if [[ "$FID_KID_PROTOCOL" != "higan" && "$FID_KID_PROTOCOL" != "torchvision" ]];
   printf 'FID_KID_PROTOCOL must be higan or torchvision; received <%q>\n' "$FID_KID_PROTOCOL" >&2
   exit 2
 fi
-CONFIG="configs/kaggle_${RUN_MODE}.yaml"
+CONFIG="configs/config.yaml"
 OUTPUT="/kaggle/working/outputs/${RUN_MODE}"
+
+loss_args=(--no ctc-guided)
+if [[ "$RUN_MODE" == "baseline" ]]; then
+  loss_args=(--no supcon --no ctc-guided)
+fi
 
 resume_args=()
 if [[ -n "$RESUME_PATH" ]]; then
@@ -129,10 +134,8 @@ python train.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --output "$OUTPUT" --max-hours "$MAX_HOURS" \
   --max-steps "$MAX_STEPS" \
   --no-eval \
-  --preview-every-steps "$PREVIEW_EVERY_STEPS" \
   "${resume_args[@]}" \
-  --contrastive-start-step "$CONTRASTIVE_START_STEP" \
-  --contrastive-ramp-steps "$CONTRASTIVE_RAMP_STEPS"
+  "${loss_args[@]}"
 
 recognizer_args=()
 if [[ -n "$RECOGNIZER_CHECKPOINT" ]]; then
