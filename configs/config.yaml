@@ -124,7 +124,7 @@ WidModel:
 
 architecture:
   # Keep baseline for exact compatibility; use multiscale_condition for the new encoder.
-  generator_variant: baseline
+  generator_variant: multiscale_condition
   multiscale_condition:
     encoder_channels:
       32: 64
