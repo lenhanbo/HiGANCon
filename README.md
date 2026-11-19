@@ -106,7 +106,9 @@ bash scripts/kaggle_run.sh \
 `RUN_MODE` accepts `baseline`, `supcon` (or legacy `contrastive`), `ctc`, and `full`.
 Choose exactly one SupCon text flag: `--supcon-shared-text` or
 `--supcon-per-item-text`. The Kaggle notebook exposes the same choices as
-`RUN_MODE` and `SUPCON_TEXT_MODE` in its first configuration cell.
+`RUN_MODE` and `SUPCON_TEXT_MODE` in its first configuration cell. It also exposes
+`GENERATOR_VARIANT` (`baseline` or `multiscale_condition`) and writes that selection
+back into the single `configs/config.yaml` before smoke testing.
 
 Images are grayscale, resized to height 32 with aspect ratio preserved, inverted and
 normalized to `[-1,1]`, then padded with `-1` to a width divisible by 16.
@@ -126,13 +128,30 @@ python train.py \
 matching, schedules, previews, automatic evaluation, and every model. Use loss opt-out flags to select an
 ablation while keeping the same configuration.
 
+Generator architecture is also YAML-owned. Keep the exact original training/model path with:
+
+```yaml
+architecture:
+  generator_variant: baseline
+```
+
+To enable the opt-in hierarchical reference encoder, change only that value to
+`multiscale_condition`. It extracts padding-aware style descriptors at image heights
+32, 16, and 8, adds them through learnable gates to HiGAN's three existing 32-D style
+chunks, and then uses the original conditional BatchNorm and upsampling blocks. Random
+`G(z, text)` generation bypasses this encoder. The global 96-D `StyleEncoder`, all loss
+modes, schedules, optimizer steps, SupCon text flags, previews, and automatic evaluation
+remain unchanged. Use a separate output directory for each architecture; the Kaggle script
+automatically appends `-multiscale_condition` to non-baseline output names.
+
 Resume with the exact same config and manifests:
 
 ```bash
 python train.py ... --resume /kaggle/input/previous-output/outputs/contrastive/checkpoints/last.pt
 ```
 
-Checkpoints include `G/D/E/R/W`, optimizers, schedulers, AMP scaler, epoch/global step,
+Checkpoints include `G/D/E/R/W`, generator architecture and learned multiscale gates,
+optimizers, schedulers, AMP scaler, epoch/global step,
 Python/NumPy/PyTorch/CUDA RNG, sampler position, Git commit, config/split hashes, and
 initial-state hash. `--max-hours` saves `last.pt` before stopping.
 

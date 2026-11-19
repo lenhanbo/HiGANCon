@@ -121,3 +121,17 @@ WidModel:
   init: none
   norm: bn
   SN_param: false
+
+architecture:
+  # Keep baseline for exact compatibility; use multiscale_condition for the new encoder.
+  generator_variant: baseline
+  multiscale_condition:
+    encoder_channels:
+      32: 64
+      16: 128
+      8: 256
+    descriptor: mean_std
+    condition_dim: 32
+    gate_init: 0.1
+    norm: group
+    activation: silu

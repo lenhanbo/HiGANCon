@@ -14,14 +14,18 @@ from scipy import linalg
 from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
-from higan_contrastive.checkpoint import file_hash
+from higan_contrastive.checkpoint import file_hash, legacy_config_hash_without_architecture
 from higan_contrastive.data import collate_words, load_experiment_dataset
 from higan_contrastive.eval_preview import save_evaluation_previews
 from higan_contrastive.metrics import (HWD_VGG16_URL, handwriting_distance,
                                        load_hwd_backbone)
 from lib.alphabet import Alphabets, get_lexicon
 from lib.utils import yaml2config
-from networks.BigGAN_networks import Generator
+from networks.multiscale_generator import (
+    build_generator, encode_reference_context, generate_with_reference,
+    generator_architecture_metadata, slice_reference_context,
+    validate_generator_architecture,
+)
 from networks.module import Recognizer, StyleEncoder, WriterIdentifier
 
 
@@ -279,12 +283,20 @@ def evaluate(args) -> dict:
     print(f"[eval] device={device} checkpoint={args.checkpoint}", flush=True)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     print("[eval] checkpoint loaded; validating config and dataset metadata", flush=True)
+    validate_generator_architecture(
+        checkpoint.get("generator_architecture"), generator_architecture_metadata(cfg))
     metadata = json.loads((Path(args.manifest_root) / "split_metadata.json").read_text(encoding="utf-8"))
     metadata_format = metadata.get("dataset_format", "iam_raw")
     if metadata_format != args.dataset_format:
         raise ValueError(
             f"Dataset format mismatch: CLI={args.dataset_format}, metadata={metadata_format}")
-    if checkpoint["config_hash"] != file_hash(args.config):
+    current_config_hash = file_hash(args.config)
+    legacy_config_hash = legacy_config_hash_without_architecture(args.config)
+    legacy_baseline = (
+        generator_architecture_metadata(cfg)["variant"] == "baseline"
+        and checkpoint["config_hash"] == legacy_config_hash
+    )
+    if checkpoint["config_hash"] != current_config_hash and not legacy_baseline:
         raise ValueError("Checkpoint/config hash mismatch")
     if checkpoint["split_hash"] != metadata["split_hash"]:
         raise ValueError("Checkpoint/manifest split hash mismatch")
@@ -316,13 +328,16 @@ def evaluate(args) -> dict:
     sample_limit = len(dataset) if args.max_samples <= 0 else min(len(dataset), args.max_samples)
     print(f"[eval] test samples={len(dataset)} evaluating={sample_limit}", flush=True)
     cfg.WidModel.n_writer = checkpoint["models"]["W"]["linear_wid.2.weight"].shape[0]
-    G = Generator(**cfg.GenModel).to(device)
+    architecture_metadata = generator_architecture_metadata(cfg)
+    G = build_generator(cfg).to(device)
     E = StyleEncoder(**cfg.EncModel).to(device)
     W = WriterIdentifier(**cfg.WidModel).to(device)
     R = Recognizer(**cfg.OcrModel).to(device)
     for name, model in (("G", G), ("E", E), ("W", W), ("R", R)):
         model.load_state_dict(checkpoint["models"][name])
         model.eval()
+    gate_values_fn = getattr(G, "gate_values", None)
+    multiscale_gate_values = gate_values_fn() if gate_values_fn is not None else None
     independent = bool(args.recognizer_checkpoint)
     if independent:
         recognizer_state = torch.load(args.recognizer_checkpoint, map_location=device, weights_only=False)
@@ -369,23 +384,31 @@ def evaluate(args) -> dict:
         labels = batch["labels"].to(device)
         label_lens = batch["label_lens"].to(device)
         mu = E(real, lengths, W.cnn_backbone)
+        reference_context = encode_reference_context(G, real, lengths)
         noise_shape = (len(real), int(cfg.GenModel.style_dim) - int(cfg.EncModel.style_dim))
         noise1 = torch.randn(noise_shape, device=device, generator=eval_generator)
         noise2 = torch.randn(noise_shape, device=device, generator=eval_generator)
-        generated = G(torch.cat((noise1, mu), 1), labels, label_lens)
-        generated2 = G(torch.cat((noise2, mu), 1), labels, label_lens)
+        generated = generate_with_reference(
+            G, torch.cat((noise1, mu), 1), labels, label_lens,
+            reference_context=reference_context)
+        generated2 = generate_with_reference(
+            G, torch.cat((noise2, mu), 1), labels, label_lens,
+            reference_context=reference_context)
         generated_lens = label_lens * int(cfg.char_width)
         different_queries = select_query_texts(
             list(batch["texts"]), in_vocab_queries, protocol_rng, require_different=True)
         different_labels, different_label_lens = encode_query_texts(different_queries, device)
-        different_generated = G(
-            torch.cat((noise1, mu), 1), different_labels, different_label_lens)
+        different_generated = generate_with_reference(
+            G, torch.cat((noise1, mu), 1), different_labels, different_label_lens,
+            reference_context=reference_context)
         different_generated_lens = different_label_lens * int(cfg.char_width)
         if oov_queries:
             oov_texts = select_query_texts(
                 list(batch["texts"]), oov_queries, protocol_rng, require_different=True)
             oov_labels, oov_label_lens = encode_query_texts(oov_texts, device)
-            oov_generated = G(torch.cat((noise1, mu), 1), oov_labels, oov_label_lens)
+            oov_generated = generate_with_reference(
+                G, torch.cat((noise1, mu), 1), oov_labels, oov_label_lens,
+                reference_context=reference_context)
             oov_generated_lens = oov_label_lens * int(cfg.char_width)
         else:
             oov_texts = []
@@ -411,9 +434,10 @@ def evaluate(args) -> dict:
                             query = preview_rng.choice(candidates)
                     gallery_queries.append(query)
             gallery_labels, gallery_label_lens = encode_query_texts(gallery_queries, device)
-            gallery_generated = G(
-                torch.cat((noise1[:preview_count], mu[:preview_count]), 1),
-                gallery_labels, gallery_label_lens)
+            gallery_generated = generate_with_reference(
+                G, torch.cat((noise1[:preview_count], mu[:preview_count]), 1),
+                gallery_labels, gallery_label_lens,
+                reference_context=slice_reference_context(reference_context, preview_count))
             gallery_lens = gallery_label_lens * int(cfg.char_width)
         embeddings.append(E(generated, generated_lens, W.cnn_backbone).cpu())
         writer_labels.append(batch["writers"])
@@ -493,6 +517,8 @@ def evaluate(args) -> dict:
                "oov_text_pool_size": len(oov_queries),
                "diversity_l1": float(np.mean(diversities)),
                "independent_recognizer": independent, "samples": len(real_images),
+               "generator_architecture": architecture_metadata,
+               "multiscale_gate_values": multiscale_gate_values,
                "eval_seed": int(args.eval_seed), "dataset_format": args.dataset_format,
                **protocol_metadata}
     if args.skip_hwd:

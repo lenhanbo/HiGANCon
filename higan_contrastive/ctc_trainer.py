@@ -110,6 +110,8 @@ class CTCSoftTrainer(HiGANTrainer):
             "train_writers": len(self.dataset.writer_to_index),
             "dataset_format": self.dataset_format,
             "max_steps_this_session": self.max_steps,
+            "generator_architecture": self.generator_architecture,
+            "multiscale_gate_values": self._multiscale_gate_values(),
             **self._auxiliary_state(max(1, self.global_step)),
         }
         (self.output / "run_metadata.json").write_text(
@@ -197,7 +199,9 @@ class CTCSoftTrainer(HiGANTrainer):
             encoded_style, mu, logvar = self._encode_style(
                 images[partners], image_lens[partners], vae=True)
             noise = torch.randn(len(images), self.noise_dim, device=self.device)
-            paired_images = G(torch.cat((noise, encoded_style), dim=1), labels, label_lens)
+            paired_images = self._generate_with_reference(
+                torch.cat((noise, encoded_style), dim=1), labels, label_lens,
+                images[partners], image_lens[partners])
             max_image_width = max(random_images.shape[-1], paired_images.shape[-1])
             all_images = torch.cat((_pad_last(random_images, max_image_width, -1.0),
                                     _pad_last(paired_images, max_image_width, -1.0)), dim=0)
@@ -264,8 +268,11 @@ class CTCSoftTrainer(HiGANTrainer):
             partners = paired_indices(len(images), self.device)
             generator = torch.Generator(device=self.device).manual_seed(int(self.cfg.seed) + self.global_step)
             reference_mu = self._encode_style(images[partners], image_lens[partners], vae=False)
+            reference_context = self._reference_context(images[partners], image_lens[partners])
             noise = torch.randn(len(images), self.noise_dim, device=self.device, generator=generator)
-            paired_images = self.models["G"](torch.cat((noise, reference_mu), dim=1), labels, label_lens)
+            paired_images = self._generate_with_reference(
+                torch.cat((noise, reference_mu), dim=1), labels, label_lens,
+                images[partners], image_lens[partners], reference_context)
             random_z = torch.randn(len(images), int(self.cfg.GenModel.style_dim),
                                    device=self.device, generator=generator)
             random_images = self.models["G"](random_z, labels, label_lens)
@@ -282,9 +289,10 @@ class CTCSoftTrainer(HiGANTrainer):
                 else:
                     supcon_labels, supcon_label_lens = labels, label_lens
                     supcon_text = list(batch["texts"])
-                supcon_images = self.models["G"](
+                supcon_images = self._generate_with_reference(
                     torch.cat((shared_noise, reference_mu), dim=1),
-                    supcon_labels, supcon_label_lens)
+                    supcon_labels, supcon_label_lens,
+                    images[partners], image_lens[partners], reference_context)
                 supcon_lens = supcon_label_lens * self.char_width
             metadata = {"global_step": self.global_step,
                         **self._auxiliary_state(max(1, self.global_step)), "items": []}

@@ -23,6 +23,21 @@ def file_hash(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def legacy_config_hash_without_architecture(path: str | Path) -> str | None:
+    """Hash config.yaml as it existed before the appended architecture section."""
+    data = Path(path).read_bytes()
+    marker = b"architecture:"
+    index = data.find(marker)
+    if index < 0:
+        return None
+    prefix = data[:index]
+    if prefix.endswith(b"\r\n\r\n"):
+        prefix = prefix[:-2]
+    elif prefix.endswith(b"\n\n"):
+        prefix = prefix[:-1]
+    return hashlib.sha256(prefix).hexdigest()
+
+
 def git_commit() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()

@@ -14,11 +14,17 @@ from torch.nn import CTCLoss, CrossEntropyLoss
 from torch.utils.data import DataLoader
 
 from lib.alphabet import Alphabets, get_lexicon, strLabelConverter
-from networks.BigGAN_networks import Discriminator, Generator
+from networks.BigGAN_networks import Discriminator
+from networks.multiscale_generator import (
+    build_generator, encode_reference_context, generate_with_reference,
+    generator_architecture_metadata, validate_generator_architecture,
+)
 from networks.module import Recognizer, StyleEncoder, WriterIdentifier
 from networks.utils import get_scheduler, rand_clip, set_requires_grad
 
-from .checkpoint import atomic_torch_save, file_hash, git_commit, restore_rng_state, rng_state, state_hash
+from .checkpoint import (atomic_torch_save, file_hash, git_commit,
+                         legacy_config_hash_without_architecture, restore_rng_state,
+                         rng_state, state_hash)
 from .data import StatefulWriterPairBatchSampler, collate_words, load_experiment_dataset
 from .losses import (contrastive_weight_at_step, kl_loss, optional_contrastive_loss,
                      supervised_contrastive_loss)
@@ -97,13 +103,14 @@ class HiGANTrainer:
 
         cfg.WidModel.n_writer = len(self.dataset.writer_to_index)
         self.models = {
-            "G": Generator(**cfg.GenModel).to(self.device),
+            "G": build_generator(cfg).to(self.device),
             "D": Discriminator(**cfg.DiscModel).to(self.device),
             "E": StyleEncoder(**cfg.EncModel).to(self.device),
             "R": Recognizer(**cfg.OcrModel).to(self.device),
             "W": WriterIdentifier(**cfg.WidModel).to(self.device),
         }
         self.initial_state_hash = state_hash(self.models)
+        self.generator_architecture = generator_architecture_metadata(cfg)
         self.optimizers = {
             "G": torch.optim.Adam(chain(self.models["G"].parameters(), self.models["E"].parameters()),
                                   lr=cfg.training.lr, betas=(cfg.training.adam_b1, cfg.training.adam_b2)),
@@ -151,6 +158,8 @@ class HiGANTrainer:
             "contrastive_start_step": self.contrastive_start_step,
             "contrastive_ramp_steps": self.contrastive_ramp_steps,
             "max_steps_this_session": self.max_steps,
+            "generator_architecture": self.generator_architecture,
+            "multiscale_gate_values": self._multiscale_gate_values(),
         }
         (self.output / "run_metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -163,13 +172,31 @@ class HiGANTrainer:
     def _encode_style(self, images, lengths, vae: bool = False):
         return self.models["E"](images, lengths, self.models["W"].cnn_backbone, vae_mode=vae)
 
+    def _multiscale_gate_values(self) -> dict[str, float] | None:
+        gate_values = getattr(self.models["G"], "gate_values", None)
+        return gate_values() if gate_values is not None else None
+
+    def _reference_context(self, images, lengths):
+        return encode_reference_context(self.models["G"], images, lengths)
+
+    def _generate_with_reference(self, z, labels, label_lengths, reference_images,
+                                 reference_lengths, reference_context=None):
+        return generate_with_reference(
+            self.models["G"], z, labels, label_lengths,
+            reference_images=None if reference_context is not None else reference_images,
+            reference_lengths=None if reference_context is not None else reference_lengths,
+            reference_context=reference_context,
+        )
+
     def _sample_fakes(self, real_images, real_lengths, labels, label_lengths):
         batch_size = real_images.shape[0]
         random_z = torch.randn(batch_size, int(self.cfg.GenModel.style_dim), device=self.device)
         random_images = self.models["G"](random_z, labels, label_lengths)
         encoded_style, mu, logvar = self._encode_style(real_images, real_lengths, vae=True)
         noise = torch.randn(batch_size, self.noise_dim, device=self.device)
-        reference_images = self.models["G"](torch.cat((noise, encoded_style), dim=1), labels, label_lengths)
+        reference_images = self._generate_with_reference(
+            torch.cat((noise, encoded_style), dim=1), labels, label_lengths,
+            real_images, real_lengths)
         return random_z, random_images, reference_images, mu, logvar
 
     def _d_step(self, batch: dict) -> dict[str, float]:
@@ -211,8 +238,9 @@ class HiGANTrainer:
         else:
             supcon_labels, supcon_label_lens = labels, label_lens
         shared_noise = torch.randn(1, self.noise_dim, device=self.device).expand(images.shape[0], -1)
-        generated = self.models["G"](torch.cat((shared_noise, ref_mu), dim=1),
-                                     supcon_labels, supcon_label_lens)
+        generated = self._generate_with_reference(
+            torch.cat((shared_noise, ref_mu), dim=1), supcon_labels, supcon_label_lens,
+            images, image_lens)
         generated_mu = self._encode_style(
             generated, supcon_label_lens * self.char_width, vae=False)
         return supervised_contrastive_loss(generated_mu, writers, float(self.cfg.contrastive.temperature))
@@ -306,11 +334,13 @@ class HiGANTrainer:
                 1, int(self.cfg.GenModel.style_dim), device=self.device, generator=generator)
             random_z = random_z_single.expand(len(images), -1)
             reference_mu = self._encode_style(images, image_lens, vae=False)
+            reference_context = self._reference_context(images, image_lens)
             noise = torch.randn(
                 len(images), self.noise_dim, device=self.device, generator=generator)
             random_images = self.models["G"](random_z, labels, label_lens)
-            reference_images = self.models["G"](
-                torch.cat((noise, reference_mu), dim=1), labels, label_lens)
+            reference_images = self._generate_with_reference(
+                torch.cat((noise, reference_mu), dim=1), labels, label_lens,
+                images, image_lens, reference_context)
             con_weight = contrastive_weight_at_step(
                 max(1, self.global_step), float(self.cfg.contrastive.lambda_con),
                 self.contrastive_start_step, self.contrastive_ramp_steps) if self.enable_supcon else 0.0
@@ -327,9 +357,10 @@ class HiGANTrainer:
                 else:
                     supcon_labels, supcon_label_lens = labels, label_lens
                     contrastive_text = list(batch["texts"])
-                contrastive_images = self.models["G"](
+                contrastive_images = self._generate_with_reference(
                     torch.cat((shared_noise, reference_mu), dim=1),
-                    supcon_labels, supcon_label_lens)
+                    supcon_labels, supcon_label_lens, images, image_lens,
+                    reference_context)
                 contrastive_lengths = supcon_label_lens * self.char_width
             metadata = {
                 "global_step": self.global_step,
@@ -384,6 +415,8 @@ class HiGANTrainer:
                 "ramp_steps": self.contrastive_ramp_steps,
                 "text_mode": self.supcon_text_mode,
             },
+            "generator_architecture": self.generator_architecture,
+            "multiscale_gate_values": self._multiscale_gate_values(),
         }
 
     def save_checkpoint(self, name: str = "last.pt") -> Path:
@@ -396,7 +429,14 @@ class HiGANTrainer:
 
     def load_checkpoint(self, path: str) -> None:
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
-        if checkpoint["config_hash"] != self.config_hash:
+        validate_generator_architecture(
+            checkpoint.get("generator_architecture"), self.generator_architecture)
+        legacy_config_hash = legacy_config_hash_without_architecture(self.config_path)
+        legacy_baseline = (
+            self.generator_architecture["variant"] == "baseline"
+            and checkpoint["config_hash"] == legacy_config_hash
+        )
+        if checkpoint["config_hash"] != self.config_hash and not legacy_baseline:
             raise ValueError("Checkpoint config hash does not match this run")
         if checkpoint["split_hash"] != self.split_hash:
             raise ValueError("Checkpoint split hash does not match manifests")

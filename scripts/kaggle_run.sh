@@ -116,9 +116,17 @@ if [[ "$FID_KID_PROTOCOL" != "higan" && "$FID_KID_PROTOCOL" != "torchvision" ]];
   exit 2
 fi
 CONFIG="configs/config.yaml"
+GENERATOR_VARIANT="$(python -c 'import yaml; c=yaml.safe_load(open("configs/config.yaml")); print(c.get("architecture", {}).get("generator_variant", "baseline"))')"
+if [[ "$GENERATOR_VARIANT" != "baseline" && "$GENERATOR_VARIANT" != "multiscale_condition" ]]; then
+  printf 'architecture.generator_variant must be baseline or multiscale_condition; received <%q>\n' "$GENERATOR_VARIANT" >&2
+  exit 2
+fi
 OUTPUT_NAME="$RUN_MODE"
 if [[ "$RUN_MODE" == "supcon" || "$RUN_MODE" == "contrastive" || "$RUN_MODE" == "full" ]]; then
   OUTPUT_NAME="${RUN_MODE}-${SUPCON_TEXT_MODE}"
+fi
+if [[ "$GENERATOR_VARIANT" != "baseline" ]]; then
+  OUTPUT_NAME="${OUTPUT_NAME}-${GENERATOR_VARIANT}"
 fi
 OUTPUT="/kaggle/working/outputs/${OUTPUT_NAME}"
 

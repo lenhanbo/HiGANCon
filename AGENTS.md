@@ -28,6 +28,20 @@ The supported combinations are:
 - `ctc`: `--no supcon`
 - `baseline`: `--no supcon --no ctc-guided`
 
+## Generator architecture variants
+
+- `architecture.generator_variant: baseline` must instantiate the exact original
+  `networks.BigGAN_networks.Generator`; do not add parameters or alter its forward path.
+- `architecture.generator_variant: multiscale_condition` enables the opt-in hierarchical
+  reference encoder. It conditions only reference-guided generation; random `G(z, text)`
+  generation must continue to bypass the reference encoder.
+- Keep architecture selection YAML-owned. Do not add an architecture CLI flag or a second
+  training entry point/config file.
+- Reference-conditioned calls must pass `reference_lengths`, use padding-aware descriptors,
+  and cache one encoded reference context when generating several query texts in evaluation.
+- Preserve legacy baseline checkpoint loading. Reject resume/evaluation when a checkpoint's
+  recorded generator variant differs from the configured variant.
+
 ## SupCon text modes
 
 SupCon always uses one shared auxiliary noise vector across the batch. Its query text is
@@ -50,8 +64,9 @@ run metadata/checkpoints and reject resume when it does not match.
 - The canonical Kaggle notebook is `kaggle/higancon.ipynb`. Do not recreate or use the
   deleted `kaggle/HiGAN_Contrastive.ipynb` unless the user explicitly asks.
 - The Kaggle notebook exposes `RUN_MODE` (`baseline`, `supcon`, `contrastive`, `ctc`, or
-  `full`) and `SUPCON_TEXT_MODE` (`shared` or `per_item`). Keep notebook, shell script,
-  README, and CLI names synchronized.
+  `full`), `SUPCON_TEXT_MODE` (`shared` or `per_item`), and `GENERATOR_VARIANT`
+  (`baseline` or `multiscale_condition`). Keep notebook, shell script, README, config,
+  and CLI names synchronized.
 - Preserve the current notebook style in later edits: one user-editable configuration
   cell, GitHub clone/pull, Hugging Face HDF5 download, dataset setup, mode-aware smoke
   test, long train plus exactly one eval, and a final results/preview cell. Modify this
