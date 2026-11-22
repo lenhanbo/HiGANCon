@@ -43,7 +43,7 @@ ctc_match:
 evaluation:
   enabled: true
   # higan keeps the existing evaluator; spisgan requires the official 339/161 HDF5 split.
-  setup: higan
+  setup: spisgan
   max_samples: 0
   fid_kid_protocol: higan
   seed: 123456
@@ -58,7 +58,7 @@ GenModel:
   resolution: 32
   G_kernel_size: 3
   G_attn: '64'
-  n_class: 72
+  n_class: 81
   num_G_SVs: 1
   num_G_SV_itrs: 1
   G_shared: false
@@ -83,7 +83,7 @@ DiscModel:
   resolution: 32
   D_kernel_size: 3
   D_attn: '64'
-  n_class: 72
+  n_class: 81
   num_D_SVs: 1
   num_D_SV_itrs: 1
   SN_eps: 1.0e-08
@@ -101,7 +101,7 @@ OcrModel:
   norm: bn
   init: none
   dropout: 0.0
-  n_class: 72
+  n_class: 81
   rnn_depth: 0
   bidirectional: false
 
