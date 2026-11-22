@@ -12,6 +12,7 @@ MAX_HOURS="11.5"
 HWD_CHECKPOINT=""
 EVAL_MAX_SAMPLES="0"
 FID_KID_PROTOCOL="higan"
+EVAL_SETUP=""
 EVAL_SEED="123456"
 MAX_STEPS="0"
 SKIP_HWD="false"
@@ -25,7 +26,7 @@ Options:
   --run-mode baseline|supcon|contrastive|ctc|full
   --supcon-shared-text             Use one shared SupCon query text
   --supcon-per-item-text           Use a separate query text per SupCon item (default)
-  --dataset-format iam_raw|higan_hdf5
+  --dataset-format iam_raw|higan_hdf5|spisgan_hdf5
   --manifest-root PATH
   --resume PATH
   --recognizer-checkpoint PATH
@@ -33,6 +34,7 @@ Options:
   --max-steps STEPS                 0 means unlimited
   --eval-max-samples COUNT          0 means the full test manifest
   --fid-kid-protocol higan|torchvision
+  --eval-setup higan|spisgan
   --eval-seed SEED
   --hwd-checkpoint PATH_OR_HF_URI
   --skip-hwd
@@ -71,6 +73,7 @@ else
       --max-steps) MAX_STEPS="${2-}"; shift 2 ;;
       --eval-max-samples) EVAL_MAX_SAMPLES="${2-}"; shift 2 ;;
       --fid-kid-protocol) FID_KID_PROTOCOL="${2-}"; shift 2 ;;
+      --eval-setup) EVAL_SETUP="${2-}"; shift 2 ;;
       --eval-seed) EVAL_SEED="${2-}"; shift 2 ;;
       --hwd-checkpoint) HWD_CHECKPOINT="${2-}"; shift 2 ;;
       --skip-hwd) SKIP_HWD="true"; shift ;;
@@ -95,8 +98,9 @@ if [[ "$RUN_MODE" != "baseline" && "$RUN_MODE" != "supcon" && \
   printf 'RUN_MODE must be baseline, supcon, contrastive, ctc, or full; received <%q>\n' "$RUN_MODE" >&2
   exit 2
 fi
-if [[ "$DATASET_FORMAT" != "iam_raw" && "$DATASET_FORMAT" != "higan_hdf5" ]]; then
-  echo "DATASET_FORMAT must be iam_raw or higan_hdf5" >&2
+if [[ "$DATASET_FORMAT" != "iam_raw" && "$DATASET_FORMAT" != "higan_hdf5" && \
+      "$DATASET_FORMAT" != "spisgan_hdf5" ]]; then
+  echo "DATASET_FORMAT must be iam_raw, higan_hdf5, or spisgan_hdf5" >&2
   exit 2
 fi
 if [[ "$SUPCON_TEXT_MODE" != "shared" && "$SUPCON_TEXT_MODE" != "per_item" ]]; then
@@ -106,16 +110,30 @@ fi
 if [[ -z "$MANIFEST_ROOT" ]]; then
   if [[ "$DATASET_FORMAT" == "higan_hdf5" ]]; then
     MANIFEST_ROOT="/kaggle/working/data_higan_hdf5"
+  elif [[ "$DATASET_FORMAT" == "spisgan_hdf5" ]]; then
+    MANIFEST_ROOT="/kaggle/working/data_spisgan_hdf5"
   else
     MANIFEST_ROOT="/kaggle/working/data"
   fi
 fi
 FID_KID_PROTOCOL="${FID_KID_PROTOCOL,,}"
+CONFIG="configs/config.yaml"
+if [[ -z "$EVAL_SETUP" ]]; then
+  EVAL_SETUP="$(python -c 'import yaml; c=yaml.safe_load(open("configs/config.yaml")); print(c.get("evaluation", {}).get("setup", "higan"))')"
+fi
+EVAL_SETUP="${EVAL_SETUP,,}"
 if [[ "$FID_KID_PROTOCOL" != "higan" && "$FID_KID_PROTOCOL" != "torchvision" ]]; then
   printf 'FID_KID_PROTOCOL must be higan or torchvision; received <%q>\n' "$FID_KID_PROTOCOL" >&2
   exit 2
 fi
-CONFIG="configs/config.yaml"
+if [[ "$EVAL_SETUP" != "higan" && "$EVAL_SETUP" != "spisgan" ]]; then
+  printf 'EVAL_SETUP must be higan or spisgan; received <%q>\n' "$EVAL_SETUP" >&2
+  exit 2
+fi
+if [[ "$EVAL_SETUP" == "spisgan" && "$DATASET_FORMAT" != "spisgan_hdf5" ]]; then
+  echo "EVAL_SETUP=spisgan requires DATASET_FORMAT=spisgan_hdf5" >&2
+  exit 2
+fi
 GENERATOR_VARIANT="$(python -c 'import yaml; c=yaml.safe_load(open("configs/config.yaml")); print(c.get("architecture", {}).get("generator_variant", "baseline"))')"
 if [[ "$GENERATOR_VARIANT" != "baseline" && "$GENERATOR_VARIANT" != "multiscale_condition" ]]; then
   printf 'architecture.generator_variant must be baseline or multiscale_condition; received <%q>\n' "$GENERATOR_VARIANT" >&2
@@ -172,5 +190,6 @@ python evaluate.py --config "$CONFIG" --dataset-root "$DATASET_ROOT" \
   --dataset-format "$DATASET_FORMAT" --manifest-root "$MANIFEST_ROOT" \
   --checkpoint "$OUTPUT/checkpoints/last.pt" \
   --output "$OUTPUT/evaluation.json" --max-samples "$EVAL_MAX_SAMPLES" \
+  --eval-setup "$EVAL_SETUP" \
   --fid-kid-protocol "$FID_KID_PROTOCOL" --eval-seed "$EVAL_SEED" \
   "${recognizer_args[@]}" "${hwd_args[@]}"

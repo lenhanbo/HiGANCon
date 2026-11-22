@@ -4,7 +4,9 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from higan_contrastive.checkpoint import file_hash, legacy_config_hash_without_architecture
+from higan_contrastive.checkpoint import (file_hash,
+                                          legacy_config_hash_without_architecture,
+                                          legacy_config_hash_without_evaluation_setup)
 from networks.BigGAN_networks import Generator
 from networks.multiscale_generator import (
     MultiScaleConditionGenerator, ScaleStyleHead, build_generator,
@@ -157,3 +159,13 @@ def test_legacy_baseline_config_hash_ignores_only_appended_architecture(tmp_path
         encoding="utf-8",
     )
     assert legacy_config_hash_without_architecture(new_config) == file_hash(old_config)
+
+
+def test_legacy_config_hash_ignores_only_evaluation_setup(tmp_path):
+    old_config = tmp_path / "old.yaml"
+    new_config = tmp_path / "new.yaml"
+    old_config.write_text(
+        "evaluation:\n  enabled: true\n  max_samples: 0\n", encoding="utf-8")
+    new_config.write_text(
+        "evaluation:\n  enabled: true\n  setup: higan\n  max_samples: 0\n", encoding="utf-8")
+    assert legacy_config_hash_without_evaluation_setup(new_config) == file_hash(old_config)

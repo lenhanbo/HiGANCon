@@ -60,3 +60,4 @@ def test_automatic_evaluation_reuses_training_inputs(tmp_path):
     assert evaluation.output == str((tmp_path / "run" / "evaluation.json").resolve())
     assert evaluation.max_samples == 12
     assert evaluation.skip_hwd
+    assert evaluation.eval_setup is None

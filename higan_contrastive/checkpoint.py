@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 import subprocess
 from pathlib import Path
 
@@ -36,6 +37,14 @@ def legacy_config_hash_without_architecture(path: str | Path) -> str | None:
     elif prefix.endswith(b"\n\n"):
         prefix = prefix[:-1]
     return hashlib.sha256(prefix).hexdigest()
+
+
+def legacy_config_hash_without_evaluation_setup(path: str | Path) -> str | None:
+    """Hash config.yaml before the non-training ``evaluation.setup`` key existed."""
+    data = Path(path).read_bytes()
+    legacy, replacements = re.subn(
+        rb"(?m)^  setup:[ \t]*[^\r\n]*(?:\r?\n)", b"", data, count=1)
+    return hashlib.sha256(legacy).hexdigest() if replacements else None
 
 
 def git_commit() -> str:

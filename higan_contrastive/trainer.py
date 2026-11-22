@@ -24,8 +24,10 @@ from networks.utils import get_scheduler, rand_clip, set_requires_grad
 
 from .checkpoint import (atomic_torch_save, file_hash, git_commit,
                          legacy_config_hash_without_architecture, restore_rng_state,
-                         rng_state, state_hash)
-from .data import StatefulWriterPairBatchSampler, collate_words, load_experiment_dataset
+                         legacy_config_hash_without_evaluation_setup, rng_state,
+                         state_hash)
+from .data import (StatefulWriterPairBatchSampler, alphabet_key_for_dataset_format,
+                   collate_words, load_experiment_dataset)
 from .losses import (contrastive_weight_at_step, kl_loss, optional_contrastive_loss,
                      supervised_contrastive_loss)
 from .preview import save_preview
@@ -91,6 +93,19 @@ class HiGANTrainer:
         self.config_hash = file_hash(self.config_path)
         self.dataset = load_experiment_dataset(
             self.dataset_format, dataset_root, self.manifest_root, "train")
+        self.alphabet_key = alphabet_key_for_dataset_format(self.dataset_format)
+        expected_classes = len(Alphabets[self.alphabet_key])
+        configured_classes = {
+            "GenModel": int(cfg.GenModel.n_class),
+            "DiscModel": int(cfg.DiscModel.n_class),
+            "OcrModel": int(cfg.OcrModel.n_class),
+        }
+        mismatched = {name: value for name, value in configured_classes.items()
+                      if value != expected_classes}
+        if mismatched:
+            raise ValueError(
+                f"Dataset format {self.dataset_format} requires alphabet "
+                f"{self.alphabet_key!r} with n_class={expected_classes}; got {mismatched}")
         writers_per_batch = int(cfg.training.writers_per_batch)
         if int(cfg.training.batch_size) != 2 * writers_per_batch:
             raise ValueError("training.batch_size must equal 2 * training.writers_per_batch")
@@ -126,13 +141,13 @@ class HiGANTrainer:
         except (AttributeError, TypeError):
             self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
         self.amp_enabled = amp_enabled
-        self.converter = strLabelConverter("all")
+        self.converter = strLabelConverter(self.alphabet_key)
         self.ctc_loss = CTCLoss(zero_infinity=True, reduction="mean")
         self.writer_loss = CrossEntropyLoss()
         self.style_dim = int(cfg.EncModel.style_dim)
         self.noise_dim = int(cfg.GenModel.style_dim) - self.style_dim
         self.char_width = int(cfg.char_width)
-        self.lexicon = get_lexicon(cfg.training.lexicon, Alphabets["all"],
+        self.lexicon = get_lexicon(cfg.training.lexicon, Alphabets[self.alphabet_key],
                                    max_length=int(cfg.training.max_word_len))
         if not self.lexicon:
             raise ValueError("The configured lexicon contains no usable words")
@@ -432,11 +447,13 @@ class HiGANTrainer:
         validate_generator_architecture(
             checkpoint.get("generator_architecture"), self.generator_architecture)
         legacy_config_hash = legacy_config_hash_without_architecture(self.config_path)
+        legacy_eval_hash = legacy_config_hash_without_evaluation_setup(self.config_path)
         legacy_baseline = (
             self.generator_architecture["variant"] == "baseline"
             and checkpoint["config_hash"] == legacy_config_hash
         )
-        if checkpoint["config_hash"] != self.config_hash and not legacy_baseline:
+        if (checkpoint["config_hash"] not in {self.config_hash, legacy_eval_hash}
+                and not legacy_baseline):
             raise ValueError("Checkpoint config hash does not match this run")
         if checkpoint["split_hash"] != self.split_hash:
             raise ValueError("Checkpoint split hash does not match manifests")

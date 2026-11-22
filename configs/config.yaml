@@ -42,6 +42,8 @@ ctc_match:
 
 evaluation:
   enabled: true
+  # higan keeps the existing evaluator; spisgan requires the official 339/161 HDF5 split.
+  setup: higan
   max_samples: 0
   fid_kid_protocol: higan
   seed: 123456
@@ -124,7 +126,7 @@ WidModel:
 
 architecture:
   # Keep baseline for exact compatibility; use multiscale_condition for the new encoder.
-  generator_variant: multiscale_condition
+  generator_variant: baseline
   multiscale_condition:
     encoder_channels:
       32: 64

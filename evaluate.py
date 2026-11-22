@@ -14,7 +14,9 @@ from scipy import linalg
 from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
-from higan_contrastive.checkpoint import file_hash, legacy_config_hash_without_architecture
+from higan_contrastive.checkpoint import (file_hash,
+                                          legacy_config_hash_without_architecture,
+                                          legacy_config_hash_without_evaluation_setup)
 from higan_contrastive.data import collate_words, load_experiment_dataset
 from higan_contrastive.eval_preview import save_evaluation_previews
 from higan_contrastive.metrics import (HWD_VGG16_URL, handwriting_distance,
@@ -279,8 +281,12 @@ def encode_query_texts(texts: list[str], device: torch.device) -> tuple[torch.Te
 @torch.inference_mode()
 def evaluate(args) -> dict:
     cfg = yaml2config(args.config)
+    eval_setup = (getattr(args, "eval_setup", None)
+                  or str(getattr(cfg.evaluation, "setup", "higan")))
+    if eval_setup not in ("higan", "spisgan"):
+        raise ValueError(f"Unknown evaluation setup: {eval_setup}")
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
-    print(f"[eval] device={device} checkpoint={args.checkpoint}", flush=True)
+    print(f"[eval] setup={eval_setup} device={device} checkpoint={args.checkpoint}", flush=True)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     print("[eval] checkpoint loaded; validating config and dataset metadata", flush=True)
     validate_generator_architecture(
@@ -292,11 +298,13 @@ def evaluate(args) -> dict:
             f"Dataset format mismatch: CLI={args.dataset_format}, metadata={metadata_format}")
     current_config_hash = file_hash(args.config)
     legacy_config_hash = legacy_config_hash_without_architecture(args.config)
+    legacy_eval_hash = legacy_config_hash_without_evaluation_setup(args.config)
     legacy_baseline = (
         generator_architecture_metadata(cfg)["variant"] == "baseline"
         and checkpoint["config_hash"] == legacy_config_hash
     )
-    if checkpoint["config_hash"] != current_config_hash and not legacy_baseline:
+    if (checkpoint["config_hash"] not in {current_config_hash, legacy_eval_hash}
+            and not legacy_baseline):
         raise ValueError("Checkpoint/config hash mismatch")
     if checkpoint["split_hash"] != metadata["split_hash"]:
         raise ValueError("Checkpoint/manifest split hash mismatch")
@@ -304,6 +312,29 @@ def evaluate(args) -> dict:
         raise ValueError("Checkpoint dataset format does not match evaluation dataset")
     dataset = load_experiment_dataset(
         args.dataset_format, args.dataset_root, args.manifest_root, "test")
+    architecture_metadata = generator_architecture_metadata(cfg)
+    if eval_setup == "spisgan":
+        if args.dataset_format != "spisgan_hdf5":
+            raise ValueError(
+                "SpiS-GAN evaluation requires --dataset-format spisgan_hdf5 and the "
+                "official train_32.hdf5/test_32.hdf5 split")
+        expected_counts = {"train": 339, "test": 161}
+        metadata_counts = metadata.get("counts", {})
+        actual_counts = {
+            name: int(metadata_counts.get(name, {}).get("writers", -1))
+            for name in expected_counts
+        }
+        if actual_counts != expected_counts:
+            raise ValueError(
+                f"SpiS-GAN metadata must use the 339/161 writer split; got {actual_counts}")
+        from higan_contrastive.spisgan_eval import evaluate_spisgan_fid
+        metrics = evaluate_spisgan_fid(
+            args, cfg, checkpoint, dataset, device, architecture_metadata)
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(
+            json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"[eval:spisgan] complete; metrics written to {args.output}", flush=True)
+        return metrics
     train_dataset = load_experiment_dataset(
         args.dataset_format, args.dataset_root, args.manifest_root, "train")
     alphabet_set = set(Alphabets["all"])
@@ -328,7 +359,6 @@ def evaluate(args) -> dict:
     sample_limit = len(dataset) if args.max_samples <= 0 else min(len(dataset), args.max_samples)
     print(f"[eval] test samples={len(dataset)} evaluating={sample_limit}", flush=True)
     cfg.WidModel.n_writer = checkpoint["models"]["W"]["linear_wid.2.weight"].shape[0]
-    architecture_metadata = generator_architecture_metadata(cfg)
     G = build_generator(cfg).to(device)
     E = StyleEncoder(**cfg.EncModel).to(device)
     W = WriterIdentifier(**cfg.WidModel).to(device)
@@ -558,12 +588,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a HiGAN checkpoint")
     parser.add_argument("--config", required=True)
     parser.add_argument("--dataset-root", required=True)
-    parser.add_argument("--dataset-format", choices=("iam_raw", "higan_hdf5"), default="iam_raw")
+    parser.add_argument("--dataset-format",
+                        choices=("iam_raw", "higan_hdf5", "spisgan_hdf5"),
+                        default="iam_raw")
     parser.add_argument("--manifest-root", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--recognizer-checkpoint", default=None,
                         help="Independent IAM recognizer state dict for reportable CER/WER")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--eval-setup", choices=("higan", "spisgan"), default=None,
+                        help="Evaluation orchestration; defaults to evaluation.setup in YAML")
     parser.add_argument("--max-samples", type=int, default=0,
                         help="Maximum unique test images; 0 evaluates the full manifest")
     parser.add_argument("--fid-kid-protocol", choices=("higan", "torchvision"), default="higan",

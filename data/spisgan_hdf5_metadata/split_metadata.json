@@ -1,0 +1,23 @@
+{
+  "counts": {
+    "test": {
+      "images": 25766,
+      "writers": 161
+    },
+    "train": {
+      "images": 66603,
+      "writers": 339
+    }
+  },
+  "dataset_format": "spisgan_hdf5",
+  "expected_writers": {
+    "test": 161,
+    "train": 339
+  },
+  "hdf5_files": {
+    "test": "test_32.hdf5",
+    "train": "train_32.hdf5"
+  },
+  "schema_version": 1,
+  "split_hash": "ba7ae4f4c35f2480d8c9993f68992056dca5d96f42acaad00d5f9eb39818a93b"
+}

@@ -84,3 +84,18 @@ run metadata/checkpoints and reject resume when it does not match.
 - CER/WER are reportable only with one frozen recognizer trained independently on real
   data and reused across every compared generator. Without it, clearly label metrics as
   diagnostic rather than silently treating the jointly trained `R` as independent.
+
+## SpiS-GAN FID evaluation
+
+- Keep the existing HiGAN evaluator as `evaluation.setup: higan`. SpiS-GAN is opt-in via
+  `evaluation.setup: spisgan` or `evaluate.py --eval-setup spisgan`.
+- SpiS-GAN evaluation requires `--dataset-format spisgan_hdf5`, the released
+  `train_32.hdf5` / `test_32.hdf5`, and the exact 339-train-writer / 161-test-writer split.
+- Use the 81-class `spisgan_iam` alphabet and require `n_class: 81` in Generator,
+  Discriminator, and Recognizer when training/evaluating checkpoints on this split.
+- The executable public SpiS-GAN FID setup is test-set replication with global FID/KID:
+  regenerate every test transcript from its test reference, use the released fixed
+  32x128 white-padded/cropped Inception preprocessing, and evaluate the complete test set.
+- Do not label IV/OOV or writer-mean FID as reproduced until their missing public sampling
+  details are explicitly defined and implemented. Preserve `evaluation.setup: higan`
+  behavior and old checkpoint compatibility.

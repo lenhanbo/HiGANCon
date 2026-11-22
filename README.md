@@ -267,6 +267,55 @@ materializing their full pairwise matrices.
 Success means improved writer retrieval and separation gap, CER degradation at most
 1 percentage point, and KID degradation at most 5% versus baseline.
 
+### SpiS-GAN test-replication FID/KID
+
+The opt-in SpiS-GAN evaluator follows the executable protocol in the authors' released
+code: use every image in the official `test_32.hdf5` as a style reference, regenerate its
+own transcript, and compute global FID/KID with patched Inception-2048 on a fixed 32x128
+white-padded/cropped canvas. It does not claim to reproduce the paper-only IV/OOV grid or
+writer-mean FID because the public repository does not provide their sampling runner.
+
+Download and validate the official 339/161-writer split:
+
+```bash
+python scripts/download_hf_hdf5.py DAIR-Group/SpiS-GAN \
+  --repo-type model --prefix data --dataset-format spisgan_hdf5 \
+  --output-dir data/spisgan_hdf5
+python prepare_higan_hdf5.py \
+  --hdf5-root data/spisgan_hdf5 \
+  --dataset-format spisgan_hdf5 \
+  --output data/spisgan_hdf5_metadata
+```
+
+The released files currently validate as follows:
+
+- `train_32.hdf5`: 66,603 images, 339 writers, SHA-256
+  `D31090DC037554619FDB70D53AA90597F3A69D0CB8EB1DFD833A44E99395B0D0`
+- `test_32.hdf5`: 25,766 images, 161 writers, SHA-256
+  `5E832EC551A57A27D6824BE57F1A01CE5CBF10172E4C803F8E3AA5A299B63790`
+
+This release uses the 81-class `spisgan_iam` alphabet. Before training on it, set all
+three `n_class` values (`GenModel`, `DiscModel`, and `OcrModel`) in
+`configs/config.yaml` to `81`. A checkpoint trained on the HiGAN 72-class, 372/128 split
+is deliberately rejected because it is not a valid unseen-writer SpiS-GAN experiment.
+
+Evaluate a checkpoint that was trained on the same SpiS-GAN split:
+
+```bash
+python evaluate.py \
+  --config configs/config.yaml \
+  --dataset-root data/spisgan_hdf5 \
+  --dataset-format spisgan_hdf5 \
+  --manifest-root data/spisgan_hdf5_metadata \
+  --checkpoint outputs/spisgan/checkpoints/last.pt \
+  --eval-setup spisgan \
+  --max-samples 0 \
+  --output outputs/spisgan/evaluation.json
+```
+
+`--max-samples 0` evaluates all 25,766 test images. Positive values are useful only for
+pipeline checks and should not be reported as the full SpiS-GAN FID.
+
 ### Evaluate a checkpoint from Hugging Face
 
 The eval-only helper accepts a full Hub URL, `hf://` URI, or model repository ID. It

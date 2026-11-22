@@ -5,6 +5,8 @@ from torch import nn
 from evaluate import (ctc_decode, higan_inception_features, kid, retrieval_metrics,
                       select_query_texts, trim_batch)
 from higan_contrastive.metrics import handwriting_distance
+from higan_contrastive.spisgan_eval import (spisgan_fid_kid,
+                                             spisgan_inception_batch)
 
 
 def test_hwd_zero_for_identical_writer_sets():
@@ -83,3 +85,28 @@ def test_higan_fid_preprocessing_pads_to_original_width_and_range():
     assert model.shape == (2, 3, 32, 320)
     assert model.value_range == (0.0, 1.0)
     assert features.shape == (2, 3)
+
+
+def test_spisgan_fid_preprocessing_uses_fixed_white_32x128_canvas():
+    class RecordingInception(nn.Module):
+        def forward(self, images):
+            self.images = images.detach().clone()
+            return [images.mean(dim=(2, 3), keepdim=True)]
+
+    model = RecordingInception()
+    images = torch.full((1, 1, 32, 160), -1.0)
+    images[:, :, :, :32] = 1.0
+    features = spisgan_inception_batch(
+        model, images, torch.tensor([32]), torch.device("cpu"))
+    assert model.images.shape == (1, 3, 32, 128)
+    assert torch.all(model.images[:, :, :, 32:] == 1.0)
+    assert features.shape == (1, 3)
+
+
+def test_spisgan_fid_kid_identical_features_are_zero():
+    rng = np.random.default_rng(11)
+    features = rng.normal(size=(12, 8)).astype(np.float64)
+    fid_value, kid_value, metadata = spisgan_fid_kid(features, features.copy())
+    assert abs(fid_value) < 1e-8
+    assert np.isfinite(kid_value)
+    assert metadata["fid_fixed_image_size"] == [32, 128]

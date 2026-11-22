@@ -5,8 +5,11 @@ import numpy as np
 
 from higan_contrastive.data import StatefulWriterPairBatchSampler, collate_words
 from higan_contrastive.hdf5_data import (HIGAN_HDF5_FILES, HiGANHDF5Dataset,
+                                         SPISGAN_HDF5_FILES,
                                          load_higan_hdf5_dataset,
-                                         prepare_higan_hdf5_metadata)
+                                         load_spisgan_hdf5_dataset,
+                                         prepare_higan_hdf5_metadata,
+                                         prepare_spisgan_hdf5_metadata)
 
 
 def _write_higan_file(path: Path, widths: list[int]) -> None:
@@ -70,3 +73,33 @@ def test_higan_accepts_original_readme_orgsz_typo(tmp_path):
     canonical.rename(root / "testset_words32d_OrgSz.hdf5")
     dataset = load_higan_hdf5_dataset(root, "test")
     assert len(dataset) == 4
+
+
+def _write_spisgan_file(path: Path, writer_count: int) -> None:
+    writers = np.arange(writer_count, dtype=np.int64)
+    images = np.full((32, writer_count), 255, dtype=np.uint8)
+    texts = ["!"] * writer_count
+    encoded = np.array([ord("!")] * writer_count, dtype=np.int32)
+    offsets = np.arange(writer_count, dtype=np.int64)
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("imgs", data=images)
+        handle.create_dataset("lbs", data=encoded)
+        handle.create_dataset("img_seek_idxs", data=offsets)
+        handle.create_dataset("lb_seek_idxs", data=offsets)
+        handle.create_dataset("img_lens", data=np.ones(writer_count, dtype=np.int64))
+        handle.create_dataset("lb_lens", data=np.ones(writer_count, dtype=np.int64))
+        handle.create_dataset("wids", data=writers)
+
+
+def test_spisgan_hdf5_metadata_split_and_alphabet(tmp_path):
+    root = tmp_path / "spisgan"
+    root.mkdir()
+    _write_spisgan_file(root / SPISGAN_HDF5_FILES["train"], 339)
+    _write_spisgan_file(root / SPISGAN_HDF5_FILES["test"], 161)
+    metadata = prepare_spisgan_hdf5_metadata(root, tmp_path / "metadata")
+    assert metadata["dataset_format"] == "spisgan_hdf5"
+    assert metadata["counts"]["train"]["writers"] == 339
+    assert metadata["counts"]["test"]["writers"] == 161
+    dataset = load_spisgan_hdf5_dataset(root, "test")
+    assert dataset[0]["text"] == "!"
+    assert dataset.alphabet_key == "spisgan_iam"

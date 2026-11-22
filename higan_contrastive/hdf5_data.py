@@ -18,6 +18,10 @@ HIGAN_HDF5_FILES = {
     "test": "testset_words32.hdf5",
     "test_original": "testset_words32_OrgSz.hdf5",
 }
+SPISGAN_HDF5_FILES = {
+    "train": "train_32.hdf5",
+    "test": "test_32.hdf5",
+}
 HIGAN_HDF5_ALIASES = {
     "test_original": ("testset_words32_OrgSz.hdf5", "testset_words32d_OrgSz.hdf5"),
 }
@@ -91,9 +95,10 @@ def prepare_higan_hdf5_metadata(root: str | Path, output: str | Path) -> dict:
 class HiGANHDF5Dataset(Dataset):
     """Lazy-reader for the exact flattened HDF5 layout distributed with HiGAN."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, alphabet_key: str = "all"):
         self.path = Path(path).expanduser().resolve()
-        self.converter = strLabelConverter("all")
+        self.alphabet_key = str(alphabet_key)
+        self.converter = strLabelConverter(self.alphabet_key)
         self._handle: h5py.File | None = None
         with h5py.File(self.path, "r") as handle:
             missing = [key for key in HDF5_KEYS if key not in handle]
@@ -198,3 +203,56 @@ def load_higan_hdf5_dataset(root: str | Path, split: str) -> Dataset:
         return AlignedHiGANHDF5EvalDataset(
             higan_hdf5_path(root, "test"), higan_hdf5_path(root, "test_original"))
     raise ValueError(f"Unsupported HiGAN HDF5 split: {split}")
+
+
+def validate_spisgan_hdf5_root(root: str | Path) -> Path:
+    root = Path(root).expanduser().resolve()
+    missing = [filename for filename in SPISGAN_HDF5_FILES.values()
+               if not (root / filename).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"Invalid SpiS-GAN HDF5 root {root}: missing {', '.join(missing)}")
+    for filename in SPISGAN_HDF5_FILES.values():
+        path = root / filename
+        with h5py.File(path, "r") as handle:
+            missing_keys = [key for key in HDF5_KEYS if key not in handle]
+            if missing_keys:
+                raise ValueError(f"{path.name} is missing HDF5 keys: {missing_keys}")
+    return root
+
+
+def prepare_spisgan_hdf5_metadata(root: str | Path, output: str | Path) -> dict:
+    """Validate and fingerprint the released 339/161-writer SpiS-GAN IAM split."""
+    root = validate_spisgan_hdf5_root(root)
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    counts = {}
+    for name, filename in SPISGAN_HDF5_FILES.items():
+        digest.update(name.encode())
+        counts[name] = _indexed_fingerprint(root / filename, digest)
+    expected_writers = {"train": 339, "test": 161}
+    actual_writers = {name: int(value["writers"]) for name, value in counts.items()}
+    if actual_writers != expected_writers:
+        raise ValueError(
+            "SpiS-GAN IAM split must contain 339 train writers and 161 test writers; "
+            f"got {actual_writers}")
+    metadata = {
+        "schema_version": 1,
+        "dataset_format": "spisgan_hdf5",
+        "hdf5_files": SPISGAN_HDF5_FILES,
+        "counts": counts,
+        "expected_writers": expected_writers,
+        "split_hash": digest.hexdigest(),
+    }
+    (output / "split_metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return metadata
+
+
+def load_spisgan_hdf5_dataset(root: str | Path, split: str) -> Dataset:
+    root = validate_spisgan_hdf5_root(root)
+    if split not in SPISGAN_HDF5_FILES:
+        raise ValueError(f"Unsupported SpiS-GAN HDF5 split: {split}")
+    return HiGANHDF5Dataset(
+        root / SPISGAN_HDF5_FILES[split], alphabet_key="spisgan_iam")

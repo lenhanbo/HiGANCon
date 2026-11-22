@@ -244,7 +244,14 @@ def load_experiment_dataset(dataset_format: str, dataset_root: str | Path,
     if dataset_format == "higan_hdf5":
         from .hdf5_data import load_higan_hdf5_dataset
         return load_higan_hdf5_dataset(dataset_root, split)
+    if dataset_format == "spisgan_hdf5":
+        from .hdf5_data import load_spisgan_hdf5_dataset
+        return load_spisgan_hdf5_dataset(dataset_root, split)
     raise ValueError(f"Unsupported dataset format: {dataset_format}")
+
+
+def alphabet_key_for_dataset_format(dataset_format: str) -> str:
+    return "spisgan_iam" if dataset_format == "spisgan_hdf5" else "all"
 
 
 class StatefulWriterPairBatchSampler(Sampler[list[int]]):

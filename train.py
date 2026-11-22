@@ -14,7 +14,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train baseline or generated-style SupCon HiGAN")
     parser.add_argument("--config", required=True)
     parser.add_argument("--dataset-root", required=True)
-    parser.add_argument("--dataset-format", choices=("iam_raw", "higan_hdf5"), default="iam_raw")
+    parser.add_argument("--dataset-format",
+                        choices=("iam_raw", "higan_hdf5", "spisgan_hdf5"),
+                        default="iam_raw")
     parser.add_argument("--manifest-root", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--resume", default=None)
@@ -42,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Do not automatically evaluate after training finishes")
     parser.add_argument("--eval-max-samples", type=int, default=None,
                         help="Automatic eval sample limit; 0 evaluates the full test split")
+    parser.add_argument("--eval-setup", choices=("higan", "spisgan"), default=None,
+                        help="Automatic evaluation setup; defaults to evaluation.setup in YAML")
     parser.add_argument("--eval-fid-kid-protocol", choices=("higan", "torchvision"),
                         default=None)
     parser.add_argument("--eval-seed", type=int, default=None)
@@ -74,6 +78,7 @@ def automatic_evaluation_args(args: argparse.Namespace, checkpoint: Path) -> Sim
         checkpoint=str(checkpoint),
         recognizer_checkpoint=args.eval_recognizer_checkpoint,
         output=str(Path(args.output).resolve() / "evaluation.json"),
+        eval_setup=args.eval_setup,
         max_samples=args.eval_max_samples,
         fid_kid_protocol=args.eval_fid_kid_protocol,
         eval_seed=args.eval_seed,
@@ -107,6 +112,8 @@ def main() -> None:
         args.supcon_text_mode = str(cfg.contrastive.text_mode)
     if args.eval_max_samples is None:
         args.eval_max_samples = int(evaluation_cfg.max_samples)
+    if args.eval_setup is None:
+        args.eval_setup = str(getattr(evaluation_cfg, "setup", "higan"))
     if args.eval_fid_kid_protocol is None:
         args.eval_fid_kid_protocol = str(evaluation_cfg.fid_kid_protocol)
     if args.eval_seed is None:
